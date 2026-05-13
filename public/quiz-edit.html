@@ -116,15 +116,43 @@
     <div class="card" id="formCard" hidden>
       <h2 id="addTitle">Neue Frage</h2>
       <input type="hidden" id="editingId" />
+
+      <div class="type-toggle">
+        <label class="type-toggle-option">
+          <input type="radio" name="qType" value="multiple-choice" checked />
+          <span>🔘 Multiple Choice</span>
+        </label>
+        <label class="type-toggle-option">
+          <input type="radio" name="qType" value="text" />
+          <span>⌨ Freitext</span>
+        </label>
+      </div>
+
       <label for="qText">Frage</label>
       <input id="qText" type="text" />
-      <div id="answersList"></div>
-      <div class="row spaced">
-        <button id="addAnswerBtn" class="secondary" type="button">+ Antwort</button>
-        <button id="removeAnswerBtn" class="secondary" type="button">– Antwort</button>
+
+      <div id="mcForm">
+        <div id="answersList"></div>
+        <div class="row spaced">
+          <button id="addAnswerBtn" class="secondary" type="button">+ Antwort</button>
+          <button id="removeAnswerBtn" class="secondary" type="button">– Antwort</button>
+        </div>
       </div>
+
+      <div id="textForm" hidden>
+        <label>Akzeptierte Antworten</label>
+        <p class="muted small" style="margin-top:.1rem">Beim Spielen wird Groß-/Kleinschreibung ignoriert und kleine Tippfehler (max. 2 Zeichen abweichend) werden noch als richtig gewertet.</p>
+        <div id="acceptedList"></div>
+        <div class="row spaced">
+          <button id="addAcceptedBtn" class="secondary" type="button">+ Antwort</button>
+          <button id="removeAcceptedBtn" class="secondary" type="button">– Antwort</button>
+        </div>
+      </div>
+
       <label for="qTime" class="spaced">Zeitlimit (Sekunden)</label>
       <input id="qTime" type="number" value="20" min="5" max="120" />
+      <p class="muted small" id="timeHint" hidden style="margin-top:.2rem">⏱ Freitext-Fragen erhalten beim Spielen automatisch das Dreifache dieser Zeit (Spieler tippen die Antwort).</p>
+
       <div class="row spaced">
         <button id="saveQBtn">Frage speichern</button>
         <button id="cancelEditBtn" class="secondary" type="button" hidden>Abbrechen</button>
@@ -177,6 +205,31 @@
       font-style: italic;
       color: var(--muted);
       padding: .4rem 0;
+    }
+
+    .type-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .4rem;
+      margin-bottom: .9rem;
+    }
+    .type-toggle-option {
+      margin: 0;
+      padding: .65rem .85rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      text-align: center;
+      font-weight: 500;
+      color: var(--muted-strong);
+      transition: border-color .15s, background .15s, color .15s;
+    }
+    .type-toggle-option:hover { border-color: var(--border-strong); }
+    .type-toggle-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .type-toggle-option:has(input:checked) {
+      border-color: rgba(168, 85, 247, .55);
+      background: rgba(168, 85, 247, .12);
+      color: var(--text);
     }
 
     .member-row {
@@ -323,6 +376,44 @@
       renderAnswers(prev, Math.min(correct, answerCount - 1));
     }
 
+    let acceptedCount = 0;
+    function renderAccepted(values) {
+      const list = $('acceptedList');
+      list.innerHTML = '';
+      for (let i = 0; i < acceptedCount; i++) {
+        const wrap = document.createElement('div');
+        wrap.style.marginTop = '.4rem';
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'accepted-input';
+        inp.placeholder = i === 0 ? 'Korrekte Antwort' : 'Weitere zulässige Schreibweise';
+        if (values && values[i] !== undefined) inp.value = values[i];
+        wrap.appendChild(inp);
+        list.appendChild(wrap);
+      }
+    }
+    function setAcceptedCount(n, valuesOverride) {
+      const prev = valuesOverride || Array.from(document.querySelectorAll('.accepted-input')).map((i) => i.value);
+      acceptedCount = Math.max(1, Math.min(20, n));
+      renderAccepted(prev);
+    }
+
+    function currentType() {
+      const r = document.querySelector('input[name="qType"]:checked');
+      return (r && r.value) === 'text' ? 'text' : 'multiple-choice';
+    }
+
+    function applyTypeUI() {
+      const isText = currentType() === 'text';
+      $('mcForm').hidden = isText;
+      $('textForm').hidden = !isText;
+      $('timeHint').hidden = !isText;
+    }
+
+    document.querySelectorAll('input[name="qType"]').forEach((el) => {
+      el.addEventListener('change', applyTypeUI);
+    });
+
     function authorLabel(quiz, authorId) {
       if (authorId === currentMe) return 'von dir';
       const m = (quiz.members.members || []).find((x) => x.id === authorId);
@@ -449,19 +540,35 @@
         const info = document.createElement('div');
         info.className = 'list-item-info';
 
+        const isText = q.type === 'text';
+        const typeBadge = isText
+          ? ' <span class="badge badge-member">Freitext</span>'
+          : '';
+        const playedTime = isText ? (q.timeLimit * 3) + 's gespielt' : q.timeLimit + 's';
         const header = document.createElement('div');
         header.style.display = 'flex';
         header.style.flexWrap = 'wrap';
         header.style.gap = '.5rem';
         header.style.alignItems = 'center';
-        header.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + q.timeLimit + 's)</span> <span class="badge badge-author">' + escapeHtml(authorLabel(quiz, q.authorId)) + '</span>';
+        header.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + playedTime + ')</span>' + typeBadge + ' <span class="badge badge-author">' + escapeHtml(authorLabel(quiz, q.authorId)) + '</span>';
         info.appendChild(header);
 
         if (q.redacted) {
           const note = document.createElement('div');
           note.className = 'question-redacted';
-          note.textContent = '• Antworten verborgen (' + q.answersCount + ' Optionen)';
+          note.textContent = isText ? '• Akzeptierte Antworten verborgen' : '• Antworten verborgen (' + q.answersCount + ' Optionen)';
           info.appendChild(note);
+        } else if (isText && q.acceptedAnswers) {
+          const ul = document.createElement('ul');
+          ul.style.margin = '.4rem 0 0 1.2rem';
+          q.acceptedAnswers.forEach((a) => {
+            const li = document.createElement('li');
+            li.textContent = a;
+            li.style.color = 'var(--good)';
+            li.style.fontWeight = '600';
+            ul.appendChild(li);
+          });
+          info.appendChild(ul);
         } else if (q.answers) {
           const ul = document.createElement('ul');
           ul.style.margin = '.4rem 0 0 1.2rem';
@@ -519,7 +626,16 @@
       $('cancelEditBtn').hidden = false;
       $('qText').value = q.text;
       $('qTime').value = q.timeLimit;
-      setAnswerCount(q.answers.length, q.answers.slice(), q.correctIndex);
+      const isText = q.type === 'text';
+      const radio = document.querySelector('input[name="qType"][value="' + (isText ? 'text' : 'multiple-choice') + '"]');
+      if (radio) radio.checked = true;
+      applyTypeUI();
+      if (isText) {
+        const list = (q.acceptedAnswers || []).slice();
+        setAcceptedCount(Math.max(1, list.length), list);
+      } else {
+        setAnswerCount(q.answers.length, q.answers.slice(), q.correctIndex);
+      }
       window.scrollTo({ top: $('formCard').offsetTop - 20, behavior: 'smooth' });
     }
 
@@ -529,7 +645,11 @@
       $('cancelEditBtn').hidden = true;
       $('qText').value = '';
       $('qTime').value = 20;
+      const radio = document.querySelector('input[name="qType"][value="multiple-choice"]');
+      if (radio) radio.checked = true;
+      applyTypeUI();
       setAnswerCount(4, ['', '', '', ''], 0);
+      setAcceptedCount(1, ['']);
     }
 
     $('cancelEditBtn').onclick = resetForm;
@@ -649,25 +769,32 @@
 
     $('addAnswerBtn').onclick = () => setAnswerCount(answerCount + 1);
     $('removeAnswerBtn').onclick = () => setAnswerCount(answerCount - 1);
+    $('addAcceptedBtn').onclick = () => setAcceptedCount(acceptedCount + 1);
+    $('removeAcceptedBtn').onclick = () => setAcceptedCount(acceptedCount - 1);
 
     $('saveQBtn').onclick = async () => {
       const msg = $('formMsg');
       msg.textContent = '';
       const text = $('qText').value.trim();
-      const answers = Array.from(document.querySelectorAll('.answer-input')).map((i) => i.value.trim());
-      const correctIndex = Number((document.querySelector('input[name="correct"]:checked') || {}).value || 0);
       const timeLimit = Number($('qTime').value) || 20;
       const editing = $('editingId').value;
+      const type = currentType();
+      const payload = { type, text, timeLimit };
+      if (type === 'text') {
+        payload.acceptedAnswers = Array.from(document.querySelectorAll('.accepted-input'))
+          .map((i) => i.value.trim()).filter((v) => v);
+      } else {
+        payload.answers = Array.from(document.querySelectorAll('.answer-input')).map((i) => i.value.trim());
+        payload.correctIndex = Number((document.querySelector('input[name="correct"]:checked') || {}).value || 0);
+      }
       try {
         if (editing) {
           await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(editing), {
-            method: 'PATCH',
-            body: JSON.stringify({ text, answers, correctIndex, timeLimit }),
+            method: 'PATCH', body: JSON.stringify(payload),
           });
         } else {
           await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions', {
-            method: 'POST',
-            body: JSON.stringify({ text, answers, correctIndex, timeLimit }),
+            method: 'POST', body: JSON.stringify(payload),
           });
         }
         resetForm();

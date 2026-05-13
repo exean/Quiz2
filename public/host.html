@@ -142,18 +142,28 @@
 
     socket.on('question:start', (data) => {
       show('questionCard');
-      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' von ' + data.total;
+      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' von ' + data.total + (data.type === 'text' ? ' · Freitext' : '');
       $('progress').textContent = '0 / ' + ($('playerList').children.length || 0) + ' geantwortet';
       $('qText').textContent = data.text;
       const ans = $('qAnswers');
       ans.innerHTML = '';
-      ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
-      data.answers.forEach((a, i) => {
-        const btn = document.createElement('div');
-        btn.className = 'answer-btn c' + i;
-        btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
-        ans.appendChild(btn);
-      });
+      if (data.type === 'text') {
+        ans.className = '';
+        const info = document.createElement('div');
+        info.className = 'banner-warn center';
+        info.style.padding = '1.5rem 1rem';
+        info.style.fontSize = '1.05rem';
+        info.innerHTML = '⌨ Spieler tippen ihre Antwort auf dem Smartphone. <br><span class="muted small">Zeit: ' + data.timeLimit + 's</span>';
+        ans.appendChild(info);
+      } else {
+        ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
+        data.answers.forEach((a, i) => {
+          const btn = document.createElement('div');
+          btn.className = 'answer-btn c' + i;
+          btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
+          ans.appendChild(btn);
+        });
+      }
       runTimer(data.deadline, data.timeLimit);
     });
 
@@ -168,28 +178,69 @@
       $('reviewTitle').textContent = correctCount + ' von ' + data.perPlayer.length + ' richtig';
       const body = $('reviewBody');
       body.innerHTML = '';
-      const counts = data.counts;
-      const max = Math.max(1, ...counts);
-      counts.forEach((c, i) => {
-        const row = document.createElement('div');
-        row.style.margin = '.55rem 0';
-        const label = document.createElement('div');
-        label.className = 'small';
-        label.style.marginBottom = '.3rem';
-        label.innerHTML = '<strong>' + String.fromCharCode(65 + i) + '</strong> · ' + c + ' Stimme(n)' + (i === data.correctIndex ? ' ✅' : '');
-        if (i === data.correctIndex) label.style.color = 'var(--good)';
-        const bar = document.createElement('div');
-        bar.style.height = '10px';
-        bar.style.borderRadius = '999px';
-        bar.style.transition = 'width .6s cubic-bezier(.22,1,.36,1)';
-        bar.style.background = i === data.correctIndex
-          ? 'linear-gradient(90deg, var(--good), #10b981)'
-          : 'linear-gradient(90deg, rgba(255,255,255,.18), rgba(255,255,255,.08))';
-        bar.style.width = Math.round((c / max) * 100) + '%';
-        bar.style.boxShadow = i === data.correctIndex ? '0 0 12px rgba(52, 211, 153, .5)' : 'none';
-        row.appendChild(label); row.appendChild(bar);
-        body.appendChild(row);
-      });
+
+      if (data.type === 'text') {
+        // Accepted answers
+        const accepted = document.createElement('div');
+        accepted.style.marginBottom = '.8rem';
+        accepted.innerHTML = '<div class="small muted" style="margin-bottom:.3rem">Akzeptierte Antworten</div>';
+        (data.acceptedAnswers || []).forEach((a) => {
+          const tag = document.createElement('span');
+          tag.style.display = 'inline-block';
+          tag.style.padding = '.35rem .7rem';
+          tag.style.margin = '.2rem .25rem .2rem 0';
+          tag.style.borderRadius = '999px';
+          tag.style.background = 'rgba(52, 211, 153, .15)';
+          tag.style.border = '1px solid rgba(52, 211, 153, .35)';
+          tag.style.color = 'var(--good)';
+          tag.style.fontWeight = '600';
+          tag.textContent = a;
+          accepted.appendChild(tag);
+        });
+        body.appendChild(accepted);
+
+        // Player responses
+        const list = document.createElement('div');
+        list.innerHTML = '<div class="small muted" style="margin:.6rem 0 .3rem">Spieler-Antworten</div>';
+        data.perPlayer.forEach((p) => {
+          const row = document.createElement('div');
+          row.style.display = 'flex';
+          row.style.justifyContent = 'space-between';
+          row.style.gap = '.5rem';
+          row.style.padding = '.35rem 0';
+          row.style.borderBottom = '1px solid var(--border)';
+          const text = p.text ? p.text : '— keine Antwort —';
+          row.innerHTML =
+            '<div><strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + escapeHtml(text) + '</span></div>' +
+            '<div style="color:' + (p.correct ? 'var(--good)' : 'var(--bad)') + '">' + (p.correct ? '✓ +' + p.gained : '✗') + '</div>';
+          list.appendChild(row);
+        });
+        body.appendChild(list);
+      } else {
+        const counts = data.counts || [];
+        const max = Math.max(1, ...counts);
+        counts.forEach((c, i) => {
+          const row = document.createElement('div');
+          row.style.margin = '.55rem 0';
+          const label = document.createElement('div');
+          label.className = 'small';
+          label.style.marginBottom = '.3rem';
+          label.innerHTML = '<strong>' + String.fromCharCode(65 + i) + '</strong> · ' + c + ' Stimme(n)' + (i === data.correctIndex ? ' ✅' : '');
+          if (i === data.correctIndex) label.style.color = 'var(--good)';
+          const bar = document.createElement('div');
+          bar.style.height = '10px';
+          bar.style.borderRadius = '999px';
+          bar.style.transition = 'width .6s cubic-bezier(.22,1,.36,1)';
+          bar.style.background = i === data.correctIndex
+            ? 'linear-gradient(90deg, var(--good), #10b981)'
+            : 'linear-gradient(90deg, rgba(255,255,255,.18), rgba(255,255,255,.08))';
+          bar.style.width = Math.round((c / max) * 100) + '%';
+          bar.style.boxShadow = i === data.correctIndex ? '0 0 12px rgba(52, 211, 153, .5)' : 'none';
+          row.appendChild(label); row.appendChild(bar);
+          body.appendChild(row);
+        });
+      }
+
       renderBoard($('reviewBoard'), data.leaderboard);
       $('nextBtn').textContent = data.hasNext ? 'Nächste Frage' : 'Endstand zeigen';
     });

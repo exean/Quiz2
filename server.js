@@ -29,6 +29,9 @@ const CREDS_FILE = path.join(DATA_DIR, 'credentials.json');
 const LOGO_MAX_DIM = 512;
 const LOGO_MAX_BYTES = 8 * 1024 * 1024;
 const QUIZ_THEMES = ['default', 'sunset', 'ocean', 'forest', 'candy', 'mono'];
+const TEXT_TIME_MULTIPLIER = 3;
+const TEXT_LEVENSHTEIN_MAX = 2;
+const TEXT_ANSWER_MAX_LEN = 200;
 const POINTS_BASE = 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -483,10 +486,7 @@ function normaliseQuiz(quiz) {
     logo: quiz.logo || null,
     memberIds: Array.isArray(quiz.memberIds) ? quiz.memberIds.filter(Boolean) : [],
     pendingEmails: Array.isArray(quiz.pendingEmails) ? quiz.pendingEmails.filter(Boolean) : [],
-    questions: (quiz.questions || []).map((q) => ({
-      ...q,
-      authorId: q.authorId || quiz.userId,
-    })),
+    questions: (quiz.questions || []).map((q) => normaliseQuestion(q, quiz.userId)),
   };
 }
 
@@ -608,13 +608,90 @@ function quizListEntry(quiz, userId) {
   };
 }
 
+function questionType(q) {
+  return q && q.type === 'text' ? 'text' : 'multiple-choice';
+}
+
+function normaliseQuestion(q, fallbackUserId) {
+  const base = {
+    id: q.id,
+    authorId: q.authorId || fallbackUserId,
+    type: questionType(q),
+    text: q.text,
+    timeLimit: q.timeLimit,
+  };
+  if (base.type === 'text') {
+    base.acceptedAnswers = Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers.slice() : [];
+  } else {
+    base.answers = Array.isArray(q.answers) ? q.answers.slice() : [];
+    base.correctIndex = q.correctIndex;
+  }
+  return base;
+}
+
 function validateQuestion(q) {
   if (!q || typeof q.text !== 'string' || !q.text.trim()) return 'Fragetext fehlt';
-  if (!Array.isArray(q.answers) || q.answers.length < 2 || q.answers.length > 6) return 'Es müssen 2-6 Antworten angegeben werden';
-  if (q.answers.some((a) => typeof a !== 'string' || !a.trim())) return 'Antworten dürfen nicht leer sein';
-  const idx = Number(q.correctIndex);
-  if (!Number.isInteger(idx) || idx < 0 || idx >= q.answers.length) return 'Index der richtigen Antwort ungültig';
+  const type = questionType(q);
+  if (type === 'text') {
+    if (!Array.isArray(q.acceptedAnswers) || !q.acceptedAnswers.length) {
+      return 'Mindestens eine akzeptierte Antwort angeben';
+    }
+    if (q.acceptedAnswers.length > 20) return 'Maximal 20 akzeptierte Antworten';
+    if (q.acceptedAnswers.some((a) => typeof a !== 'string' || !a.trim())) {
+      return 'Akzeptierte Antworten dürfen nicht leer sein';
+    }
+  } else {
+    if (!Array.isArray(q.answers) || q.answers.length < 2 || q.answers.length > 6) {
+      return 'Es müssen 2-6 Antworten angegeben werden';
+    }
+    if (q.answers.some((a) => typeof a !== 'string' || !a.trim())) {
+      return 'Antworten dürfen nicht leer sein';
+    }
+    const idx = Number(q.correctIndex);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= q.answers.length) {
+      return 'Index der richtigen Antwort ungültig';
+    }
+  }
   return null;
+}
+
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    const ai = a.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+function normaliseTextAnswer(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+function isTextAnswerCorrect(input, acceptedList) {
+  const inp = normaliseTextAnswer(input);
+  if (!inp) return false;
+  for (const accepted of acceptedList || []) {
+    const norm = normaliseTextAnswer(accepted);
+    if (!norm) continue;
+    if (levenshtein(inp, norm) <= TEXT_LEVENSHTEIN_MAX) return true;
+  }
+  return false;
+}
+
+function effectiveTimeLimit(q) {
+  return q.type === 'text' ? q.timeLimit * TEXT_TIME_MULTIPLIER : q.timeLimit;
 }
 
 function getQuizForAccess(req, role) {
@@ -818,20 +895,41 @@ app.delete('/api/quizzes/:id/members/:key', authMiddleware, (req, res) => {
 
 /* questions */
 
+function buildQuestionPayload(body, base) {
+  const type = body.type === 'text' ? 'text' : 'multiple-choice';
+  const time = body.timeLimit !== undefined
+    ? Math.max(5, Math.min(120, Number(body.timeLimit) || 20))
+    : (base && base.timeLimit) || 20;
+  const out = {
+    ...(base || {}),
+    type,
+    text: body.text !== undefined ? String(body.text).trim() : (base && base.text),
+    timeLimit: time,
+  };
+  if (type === 'text') {
+    const list = Array.isArray(body.acceptedAnswers)
+      ? body.acceptedAnswers
+      : (base && base.acceptedAnswers) || [];
+    out.acceptedAnswers = list.map((a) => String(a).trim()).filter((a) => a);
+    delete out.answers;
+    delete out.correctIndex;
+  } else {
+    out.answers = Array.isArray(body.answers)
+      ? body.answers.map((a) => String(a).trim())
+      : ((base && base.answers) || []);
+    out.correctIndex = body.correctIndex !== undefined ? Number(body.correctIndex) : (base && base.correctIndex);
+    delete out.acceptedAnswers;
+  }
+  return out;
+}
+
 app.post('/api/quizzes/:id/questions', authMiddleware, (req, res) => {
   const { quiz, list, error, status } = getQuizForAccess(req);
   if (error) return res.status(status).json({ error });
-  const err = validateQuestion(req.body);
+  const candidate = buildQuestionPayload(req.body, null);
+  const err = validateQuestion(candidate);
   if (err) return res.status(400).json({ error: err });
-  const time = Number(req.body.timeLimit) || 20;
-  const q = {
-    id: newId(),
-    authorId: req.user.id,
-    text: req.body.text.trim(),
-    answers: req.body.answers.map((a) => a.trim()),
-    correctIndex: Number(req.body.correctIndex),
-    timeLimit: Math.max(5, Math.min(120, time)),
-  };
+  const q = { id: newId(), authorId: req.user.id, ...candidate };
   quiz.questions = quiz.questions || [];
   quiz.questions.push(q);
   quiz.updatedAt = new Date().toISOString();
@@ -848,13 +946,7 @@ app.patch('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
   if (!canEditQuestion(quiz, current, req.user.id)) {
     return res.status(403).json({ error: 'Du darfst diese Frage nicht bearbeiten' });
   }
-  const merged = {
-    ...current,
-    text: req.body.text !== undefined ? String(req.body.text).trim() : current.text,
-    answers: Array.isArray(req.body.answers) ? req.body.answers.map((a) => String(a).trim()) : current.answers,
-    correctIndex: req.body.correctIndex !== undefined ? Number(req.body.correctIndex) : current.correctIndex,
-    timeLimit: req.body.timeLimit !== undefined ? Math.max(5, Math.min(120, Number(req.body.timeLimit) || 20)) : current.timeLimit,
-  };
+  const merged = buildQuestionPayload(req.body, current);
   const err = validateQuestion(merged);
   if (err) return res.status(400).json({ error: err });
   quiz.questions[idx] = merged;
@@ -912,33 +1004,41 @@ function startQuestion(game) {
   game.state = 'question';
   game.questionStart = Date.now();
   game.answers = new Map();
-  const deadline = game.questionStart + q.timeLimit * 1000;
+  const limit = effectiveTimeLimit(q);
+  const deadline = game.questionStart + limit * 1000;
   io.to(game.pin).emit('question:start', {
     index: game.currentIndex,
     total: game.questions.length,
+    type: q.type,
     text: q.text,
-    answers: q.answers,
-    timeLimit: q.timeLimit,
+    answers: q.type === 'text' ? null : q.answers,
+    timeLimit: limit,
     deadline,
   });
   if (game.timer) clearTimeout(game.timer);
-  game.timer = setTimeout(() => endQuestion(game, 'timeout'), q.timeLimit * 1000);
+  game.timer = setTimeout(() => endQuestion(game, 'timeout'), limit * 1000);
 }
 
 function endQuestion(game, reason) {
   if (game.state !== 'question') return;
   if (game.timer) { clearTimeout(game.timer); game.timer = null; }
   const q = game.questions[game.currentIndex];
-  const totalTime = q.timeLimit * 1000;
+  const totalTime = effectiveTimeLimit(q) * 1000;
   const perPlayer = [];
   for (const player of game.players.values()) {
     const ans = game.answers.get(player.id);
     let correct = false;
     let gained = 0;
     let choice = null;
+    let text = null;
     if (ans) {
-      choice = ans.choice;
-      correct = ans.choice === q.correctIndex;
+      if (q.type === 'text') {
+        text = ans.text;
+        correct = isTextAnswerCorrect(ans.text, q.acceptedAnswers);
+      } else {
+        choice = ans.choice;
+        correct = ans.choice === q.correctIndex;
+      }
       if (correct) {
         const remaining = Math.max(0, totalTime - (ans.at - game.questionStart));
         const speed = remaining / totalTime;
@@ -946,16 +1046,21 @@ function endQuestion(game, reason) {
         player.score += gained;
       }
     }
-    perPlayer.push({ id: player.id, name: player.name, correct, gained, choice });
+    perPlayer.push({ id: player.id, name: player.name, correct, gained, choice, text });
   }
-  const counts = q.answers.map(() => 0);
-  for (const ans of game.answers.values()) {
-    if (typeof ans.choice === 'number' && counts[ans.choice] !== undefined) counts[ans.choice] += 1;
+  let counts = null;
+  if (q.type !== 'text') {
+    counts = q.answers.map(() => 0);
+    for (const ans of game.answers.values()) {
+      if (typeof ans.choice === 'number' && counts[ans.choice] !== undefined) counts[ans.choice] += 1;
+    }
   }
   game.state = 'review';
   io.to(game.pin).emit('question:end', {
     reason,
-    correctIndex: q.correctIndex,
+    type: q.type,
+    correctIndex: q.type === 'text' ? null : q.correctIndex,
+    acceptedAnswers: q.type === 'text' ? q.acceptedAnswers : null,
     counts,
     perPlayer,
     leaderboard: leaderboard(game),
@@ -967,7 +1072,9 @@ function endQuestion(game, reason) {
       correct: me ? me.correct : false,
       gained: me ? me.gained : 0,
       score: player.score,
-      correctIndex: q.correctIndex,
+      type: q.type,
+      correctIndex: q.type === 'text' ? null : q.correctIndex,
+      acceptedAnswers: q.type === 'text' ? q.acceptedAnswers : null,
     });
   }
 }
@@ -1095,13 +1202,23 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true });
   });
 
-  socket.on('player:answer', ({ choice }, cb) => {
+  socket.on('player:answer', ({ choice, text }, cb) => {
     const game = games.get(socket.data.pin);
     if (!game || game.state !== 'question') return cb && cb({ error: 'Keine aktive Frage' });
     const q = game.questions[game.currentIndex];
-    if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) return cb && cb({ error: 'Ungültige Antwort' });
     if (game.answers.has(socket.id)) return cb && cb({ error: 'Schon beantwortet' });
-    game.answers.set(socket.id, { choice, at: Date.now() });
+
+    if (q.type === 'text') {
+      const answer = String(text || '').trim().slice(0, TEXT_ANSWER_MAX_LEN);
+      if (!answer) return cb && cb({ error: 'Antwort darf nicht leer sein' });
+      game.answers.set(socket.id, { text: answer, at: Date.now() });
+    } else {
+      if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
+        return cb && cb({ error: 'Ungültige Antwort' });
+      }
+      game.answers.set(socket.id, { choice, at: Date.now() });
+    }
+
     cb && cb({ ok: true });
     io.to(game.hostSocketId).emit('host:answerProgress', {
       answered: game.answers.size,

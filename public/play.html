@@ -122,19 +122,34 @@
     socket.on('question:start', (data) => {
       answered = false;
       show('questionCard');
-      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' / ' + data.total;
+      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' / ' + data.total + (data.type === 'text' ? ' · Freitext' : '');
       $('qText').textContent = data.text;
       $('waitMsg').hidden = true;
       const ans = $('qAnswers');
       ans.innerHTML = '';
-      ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
-      data.answers.forEach((a, i) => {
-        const btn = document.createElement('button');
-        btn.className = 'answer-btn c' + i;
-        btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
-        btn.onclick = () => sendAnswer(i, btn);
-        ans.appendChild(btn);
-      });
+      if (data.type === 'text') {
+        ans.className = '';
+        const form = document.createElement('div');
+        form.innerHTML =
+          '<input id="textAnswerInput" type="text" maxlength="200" placeholder="Deine Antwort..." autocomplete="off" autocapitalize="off" spellcheck="false" />' +
+          '<button id="submitTextBtn" class="spaced" style="width:100%">Antwort absenden</button>';
+        ans.appendChild(form);
+        const input = document.getElementById('textAnswerInput');
+        const submitBtn = document.getElementById('submitTextBtn');
+        input.focus();
+        const submit = () => sendTextAnswer(input.value);
+        submitBtn.onclick = submit;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+      } else {
+        ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
+        data.answers.forEach((a, i) => {
+          const btn = document.createElement('button');
+          btn.className = 'answer-btn c' + i;
+          btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
+          btn.onclick = () => sendAnswer(i, btn);
+          ans.appendChild(btn);
+        });
+      }
       runTimer(data.deadline, data.timeLimit);
     });
 
@@ -157,6 +172,31 @@
       });
     }
 
+    function sendTextAnswer(text) {
+      if (answered) return;
+      const value = (text || '').trim();
+      if (!value) {
+        alert('Bitte eine Antwort eingeben');
+        return;
+      }
+      answered = true;
+      const input = document.getElementById('textAnswerInput');
+      const submitBtn = document.getElementById('submitTextBtn');
+      if (input) input.disabled = true;
+      if (submitBtn) submitBtn.disabled = true;
+      $('waitMsg').hidden = false;
+      $('waitMsg').textContent = '"' + value + '" abgeschickt – warte auf die anderen ...';
+      socket.emit('player:answer', { text: value }, (resp) => {
+        if (resp && resp.error) {
+          answered = false;
+          if (input) input.disabled = false;
+          if (submitBtn) submitBtn.disabled = false;
+          $('waitMsg').hidden = true;
+          alert(resp.error);
+        }
+      });
+    }
+
     socket.on('question:result', (data) => {
       show('reviewCard');
       const banner = $('resultBanner');
@@ -165,7 +205,11 @@
         banner.textContent = '✅ Richtig! +' + data.gained + ' Punkte';
       } else {
         banner.className = 'banner-bad';
-        banner.textContent = '❌ Leider falsch';
+        let html = '❌ Leider falsch';
+        if (data.type === 'text' && Array.isArray(data.acceptedAnswers) && data.acceptedAnswers.length) {
+          html += '<div class="small spaced" style="opacity:.85">Korrekt wäre: ' + data.acceptedAnswers.map((a) => '<strong>' + a.replace(/[<>&]/g, '') + '</strong>').join(' / ') + '</div>';
+        }
+        banner.innerHTML = html;
       }
       $('myScore').textContent = data.score;
     });
