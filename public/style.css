@@ -162,6 +162,37 @@ td.score { text-align: right; font-variant-numeric: tabular-nums; }
 
 .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 
+.list-item {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  padding: .8rem 0;
+  border-bottom: 1px solid #334155;
+}
+.list-item-info { min-width: 0; word-break: break-word; }
+.list-item-actions {
+  display: flex;
+  gap: .4rem;
+  flex-wrap: wrap;
+}
+.list-item-actions > * {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  padding-left: .6rem;
+  padding-right: .6rem;
+}
+@media (min-width: 640px) {
+  .list-item {
+    flex-direction: row;
+    align-items: center;
+    gap: 1rem;
+  }
+  .list-item-info { flex: 1; }
+  .list-item-actions { flex: 0 0 auto; }
+  .list-item-actions > * { flex: 0 0 auto; }
+}
+
 .join-info {
   display: flex;
   gap: 1.5rem;

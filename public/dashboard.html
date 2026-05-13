@@ -78,21 +78,18 @@
       }
       list.forEach((q) => {
         const div = document.createElement('div');
-        div.style.borderBottom = '1px solid #334155';
-        div.style.padding = '.7rem 0';
+        div.className = 'list-item';
         const playable = q.questionCount > 0;
         div.innerHTML =
-          '<div class="flex-between" style="flex-wrap:wrap;gap:.5rem">' +
-            '<div style="min-width:0;flex:1">' +
-              '<strong>' + escapeHtml(q.name) + '</strong> ' +
-              '<span class="muted small">(' + q.questionCount + ' Frage' + (q.questionCount === 1 ? '' : 'n') + ')</span>' +
-              (q.description ? '<div class="muted small">' + escapeHtml(q.description) + '</div>' : '') +
-            '</div>' +
-            '<div class="row" style="flex:0 0 auto;gap:.4rem">' +
-              '<a class="btn" href="/host.html?quiz=' + encodeURIComponent(q.id) + '" ' + (playable ? '' : 'style="opacity:.4;pointer-events:none"') + '>Spielen</a>' +
-              '<a class="btn secondary" href="/quiz-edit.html?id=' + encodeURIComponent(q.id) + '">Bearbeiten</a>' +
-              '<button class="danger" data-del="' + q.id + '">Löschen</button>' +
-            '</div>' +
+          '<div class="list-item-info">' +
+            '<strong>' + escapeHtml(q.name) + '</strong> ' +
+            '<span class="muted small">(' + q.questionCount + ' Frage' + (q.questionCount === 1 ? '' : 'n') + ')</span>' +
+            (q.description ? '<div class="muted small">' + escapeHtml(q.description) + '</div>' : '') +
+          '</div>' +
+          '<div class="list-item-actions">' +
+            '<a class="btn" href="/host.html?quiz=' + encodeURIComponent(q.id) + '" ' + (playable ? '' : 'style="opacity:.4;pointer-events:none"') + '>Spielen</a>' +
+            '<a class="btn secondary" href="/quiz-edit.html?id=' + encodeURIComponent(q.id) + '">Bearbeiten</a>' +
+            '<button class="danger" data-del="' + q.id + '">Löschen</button>' +
           '</div>';
         target.appendChild(div);
       });
@@ -115,10 +112,12 @@
       }
       list.forEach((c) => {
         const div = document.createElement('div');
-        div.className = 'flex-between';
-        div.style.padding = '.4rem 0';
-        div.style.borderBottom = '1px solid #334155';
-        div.innerHTML = '<div>' + escapeHtml(c.label) + ' <span class="muted small">(' + new Date(c.createdAt).toLocaleDateString() + ')</span></div>';
+        div.className = 'list-item';
+        const info = document.createElement('div');
+        info.className = 'list-item-info';
+        info.innerHTML = escapeHtml(c.label) + ' <span class="muted small">(' + new Date(c.createdAt).toLocaleDateString() + ')</span>';
+        const actions = document.createElement('div');
+        actions.className = 'list-item-actions';
         const del = document.createElement('button');
         del.className = 'danger';
         del.textContent = 'Entfernen';
@@ -127,7 +126,9 @@
           await api('/api/webauthn/credentials/' + encodeURIComponent(c.id), { method: 'DELETE' });
           loadPasskeys();
         };
-        div.appendChild(del);
+        actions.appendChild(del);
+        div.appendChild(info);
+        div.appendChild(actions);
         target.appendChild(div);
       });
     }

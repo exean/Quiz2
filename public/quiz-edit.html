@@ -132,13 +132,24 @@
       }
       qs.forEach((q, idx) => {
         const div = document.createElement('div');
-        div.style.borderBottom = '1px solid #334155';
-        div.style.padding = '.6rem 0';
-        const top = document.createElement('div');
-        top.className = 'flex-between';
-        top.innerHTML = '<div><strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + q.timeLimit + 's)</span></div>';
+        div.className = 'list-item';
+
+        const info = document.createElement('div');
+        info.className = 'list-item-info';
+        info.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + q.timeLimit + 's)</span>';
+
+        const ul = document.createElement('ul');
+        ul.style.margin = '.4rem 0 0 1.2rem';
+        q.answers.forEach((a, i) => {
+          const li = document.createElement('li');
+          li.textContent = a;
+          if (i === q.correctIndex) { li.style.color = 'var(--good)'; li.style.fontWeight = '600'; }
+          ul.appendChild(li);
+        });
+        info.appendChild(ul);
+
         const btns = document.createElement('div');
-        btns.className = 'row';
+        btns.className = 'list-item-actions';
         const edit = document.createElement('button');
         edit.textContent = 'Bearbeiten';
         edit.className = 'secondary';
@@ -152,18 +163,9 @@
           load();
         };
         btns.appendChild(edit); btns.appendChild(del);
-        top.appendChild(btns);
-        div.appendChild(top);
 
-        const ul = document.createElement('ul');
-        ul.style.margin = '.4rem 0 0 1.2rem';
-        q.answers.forEach((a, i) => {
-          const li = document.createElement('li');
-          li.textContent = a;
-          if (i === q.correctIndex) { li.style.color = 'var(--good)'; li.style.fontWeight = '600'; }
-          ul.appendChild(li);
-        });
-        div.appendChild(ul);
+        div.appendChild(info);
+        div.appendChild(btns);
         target.appendChild(div);
       });
     }
