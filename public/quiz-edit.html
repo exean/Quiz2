@@ -13,11 +13,14 @@
 <body>
   <div class="container">
     <div class="card flex-between">
-      <h1 id="title">Quiz</h1>
+      <div>
+        <h1 id="title">Quiz</h1>
+        <p class="muted small" id="subtitle"></p>
+      </div>
       <a class="btn secondary" href="/dashboard.html">Zurück</a>
     </div>
 
-    <div class="card">
+    <div class="card" id="metaCard" hidden>
       <h2>Stammdaten</h2>
       <label for="qName">Name</label>
       <input id="qName" type="text" maxlength="80" />
@@ -27,7 +30,68 @@
       <div id="metaMsg" class="small spaced"></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="modeCard" hidden>
+      <h2>Sichtbarkeit für Mitwirkende</h2>
+      <p class="muted small">Bestimmt, was andere User sehen und bearbeiten dürfen.</p>
+      <div class="mode-options">
+        <label class="mode-option">
+          <input type="radio" name="mode" value="open" />
+          <div>
+            <strong>Offen</strong>
+            <p class="muted small">Alle sehen alle Fragen und Antworten und können alles bearbeiten.</p>
+          </div>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="questions-visible" />
+          <div>
+            <strong>Fragen sichtbar, Antworten verborgen</strong>
+            <p class="muted small">Mitwirkende sehen fremde Fragen, aber nicht die Antworten. Nur eigene Fragen sind editierbar.</p>
+          </div>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="count-only" />
+          <div>
+            <strong>Nur eigene sichtbar</strong>
+            <p class="muted small">Mitwirkende sehen nur ihre eigenen Fragen. Andere werden nur als Zahl angezeigt.</p>
+          </div>
+        </label>
+      </div>
+
+      <h3 class="spaced">Wer darf das Spiel starten?</h3>
+      <div class="mode-options">
+        <label class="mode-option">
+          <input type="radio" name="hostMode" value="owner" />
+          <div>
+            <strong>Nur ich (Ersteller)</strong>
+            <p class="muted small">Empfohlen wenn Modus 2 oder 3 aktiv ist – sonst könnten Mitwirkende beim Hosten die ganzen Fragen sehen.</p>
+          </div>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="hostMode" value="members" />
+          <div>
+            <strong>Alle Mitwirkenden</strong>
+            <p class="muted small">Jeder Mitwirkende darf ein Spiel mit diesem Quiz starten.</p>
+          </div>
+        </label>
+      </div>
+
+      <div id="modeMsg" class="small spaced"></div>
+    </div>
+
+    <div class="card" id="membersCard" hidden>
+      <h2>Mitwirkende</h2>
+      <p class="muted small">Lade andere ein, gemeinsam an diesem Quiz zu arbeiten.</p>
+      <div id="membersList"></div>
+      <label for="inviteEmail" class="spaced">E-Mail einladen</label>
+      <div class="row">
+        <input id="inviteEmail" type="email" placeholder="freund@example.com" />
+        <button id="inviteBtn" type="button" style="flex:0 0 auto">Einladen</button>
+      </div>
+      <p class="muted small" style="margin-top:.4rem">Unregistrierte E-Mails werden gemerkt und beim Registrieren automatisch zum Quiz hinzugefügt.</p>
+      <div id="inviteMsg" class="small spaced"></div>
+    </div>
+
+    <div class="card" id="formCard" hidden>
       <h2 id="addTitle">Neue Frage</h2>
       <input type="hidden" id="editingId" />
       <label for="qText">Frage</label>
@@ -48,9 +112,66 @@
 
     <div class="card">
       <h2>Fragen</h2>
+      <div id="othersHint" class="banner-warn small" hidden style="margin-bottom:.75rem"></div>
       <div id="questionList"></div>
     </div>
   </div>
+
+  <style>
+    .mode-options { display: flex; flex-direction: column; gap: .5rem; margin-top: .5rem; }
+    .mode-option {
+      display: flex; gap: .65rem; align-items: flex-start;
+      padding: .8rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+      margin: 0;
+      color: var(--text);
+      font-weight: 500;
+    }
+    .mode-option:hover { border-color: var(--border-strong); background: var(--surface-strong); }
+    .mode-option input { width: auto; margin-top: .25rem; }
+    .mode-option input:checked ~ div strong { color: var(--accent-1); }
+    .mode-option:has(input:checked) { border-color: rgba(168, 85, 247, .55); background: rgba(168, 85, 247, .08); }
+    .mode-option p { margin: .25rem 0 0; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: .25rem .65rem;
+      border-radius: 999px;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      border: 1px solid;
+    }
+    .badge-owner { color: #d8b4fe; background: rgba(168,85,247,.18); border-color: rgba(168,85,247,.4); }
+    .badge-member { color: #67e8f9; background: rgba(34,211,238,.15); border-color: rgba(34,211,238,.4); }
+    .badge-author { color: var(--muted-strong); background: var(--surface); border-color: var(--border); font-weight: 500; text-transform: none; letter-spacing: 0; }
+
+    .question-redacted {
+      font-style: italic;
+      color: var(--muted);
+      padding: .4rem 0;
+    }
+
+    .member-row {
+      display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+      padding: .55rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .member-row:last-child { border-bottom: none; }
+    .member-row .pending {
+      font-size: .72rem;
+      color: var(--warn);
+      background: rgba(251,191,36,.12);
+      padding: .15rem .55rem;
+      border-radius: 999px;
+      margin-left: .4rem;
+    }
+  </style>
 
   <script>
     const $ = (id) => document.getElementById(id);
@@ -59,6 +180,8 @@
     if (!quizId) location.href = '/dashboard.html';
 
     let answerCount = 0;
+    let currentMe = null;
+    let currentQuiz = null;
 
     async function api(path, opts = {}) {
       const res = await fetch(path, {
@@ -96,7 +219,6 @@
         radWrap.style.flex = '0 0 auto';
         radWrap.style.alignSelf = 'center';
         radWrap.style.margin = '0';
-        radWrap.style.color = 'var(--text)';
         const rad = document.createElement('input');
         rad.type = 'radio';
         rad.name = 'correct';
@@ -119,59 +241,188 @@
       renderAnswers(prev, Math.min(correct, answerCount - 1));
     }
 
-    async function load() {
-      const quiz = await api('/api/quizzes/' + encodeURIComponent(quizId));
-      $('title').textContent = quiz.name;
-      $('qName').value = quiz.name;
-      $('qDesc').value = quiz.description || '';
-      renderQuestionList(quiz.questions || []);
+    function authorLabel(quiz, authorId) {
+      if (authorId === currentMe) return 'von dir';
+      const m = (quiz.members.members || []).find((x) => x.id === authorId);
+      if (m) return 'von ' + m.email;
+      if (quiz.members.ownerId === authorId) return 'von ' + (quiz.members.ownerEmail || 'Ersteller');
+      return 'von einem Mitwirkenden';
     }
 
-    function renderQuestionList(qs) {
+    function renderQuiz(quiz) {
+      currentQuiz = quiz;
+      $('title').textContent = quiz.name;
+      const role = quiz.isOwner ? 'owner' : 'member';
+      const badge = '<span class="badge badge-' + role + '">' + (role === 'owner' ? 'Ersteller' : 'Mitwirkende:r') + '</span>';
+      const modeLabel = ({
+        'open': 'Modus: Offen',
+        'questions-visible': 'Modus: Fragen sichtbar, Antworten verborgen',
+        'count-only': 'Modus: Nur eigene sichtbar',
+      })[quiz.mode] || quiz.mode;
+      $('subtitle').innerHTML = badge + ' &nbsp; <span class="muted">' + modeLabel + '</span>';
+
+      // Owner-only sections
+      $('metaCard').hidden = !quiz.isOwner;
+      $('modeCard').hidden = !quiz.isOwner;
+      $('membersCard').hidden = !quiz.isOwner;
+
+      if (quiz.isOwner) {
+        $('qName').value = quiz.name;
+        $('qDesc').value = quiz.description || '';
+        const modeRadio = document.querySelector('input[name="mode"][value="' + quiz.mode + '"]');
+        if (modeRadio) modeRadio.checked = true;
+        const hostRadio = document.querySelector('input[name="hostMode"][value="' + quiz.hostMode + '"]');
+        if (hostRadio) hostRadio.checked = true;
+        renderMembers(quiz.members);
+      }
+
+      // Form: everyone (owner & member) can add own questions
+      $('formCard').hidden = false;
+
+      renderQuestionList(quiz);
+    }
+
+    function renderMembers(members) {
+      const target = $('membersList');
+      target.innerHTML = '';
+      const rows = [];
+      rows.push({ label: members.ownerEmail || 'Du', tag: 'Ersteller' });
+      members.members.forEach((m) => rows.push({ label: m.email, removeKey: m.id }));
+      members.pendingEmails.forEach((e) => rows.push({ label: e, pending: true, removeKey: e }));
+
+      if (rows.length === 1) {
+        const p = document.createElement('p');
+        p.className = 'muted small';
+        p.textContent = 'Du arbeitest aktuell alleine an diesem Quiz.';
+        target.appendChild(p);
+      }
+
+      rows.forEach((r) => {
+        const div = document.createElement('div');
+        div.className = 'member-row';
+        const left = document.createElement('div');
+        left.innerHTML = escapeHtml(r.label) +
+          (r.tag ? ' <span class="muted small">(' + r.tag + ')</span>' : '') +
+          (r.pending ? ' <span class="pending">Einladung ausstehend</span>' : '');
+        div.appendChild(left);
+        if (r.removeKey) {
+          const btn = document.createElement('button');
+          btn.className = 'danger';
+          btn.style.padding = '.4rem .8rem';
+          btn.style.fontSize = '.8rem';
+          btn.textContent = 'Entfernen';
+          btn.onclick = async () => {
+            if (!confirm('Wirklich entfernen?')) return;
+            try {
+              const data = await api('/api/quizzes/' + encodeURIComponent(quizId) + '/members/' + encodeURIComponent(r.removeKey), { method: 'DELETE' });
+              renderMembers(data.members);
+            } catch (err) {
+              alert(err.message);
+            }
+          };
+          div.appendChild(btn);
+        }
+        target.appendChild(div);
+      });
+    }
+
+    function renderQuestionList(quiz) {
       const target = $('questionList');
       target.innerHTML = '';
-      if (!qs.length) {
-        target.innerHTML = '<p class="muted">Noch keine Fragen.</p>';
+      const qs = quiz.questions || [];
+
+      // count-only hint
+      $('othersHint').hidden = true;
+      if (quiz.mode === 'count-only' && !quiz.isOwner && quiz.othersCount > 0) {
+        $('othersHint').textContent = '+ ' + quiz.othersCount + ' Frage' + (quiz.othersCount === 1 ? '' : 'n') + ' von anderen Mitwirkenden (für dich nicht sichtbar)';
+        $('othersHint').hidden = false;
+      }
+      // also show count for owner in modes 2/3
+      if (quiz.isOwner && (quiz.mode === 'count-only' || quiz.mode === 'questions-visible')) {
+        const others = qs.filter((q) => q.authorId !== currentMe).length;
+        if (others > 0) {
+          $('othersHint').textContent = others + ' Frage' + (others === 1 ? '' : 'n') + ' wurden von Mitwirkenden beigesteuert.';
+          $('othersHint').className = 'banner-good small';
+          $('othersHint').hidden = false;
+        }
+      }
+
+      if (!qs.length && quiz.othersCount === 0) {
+        const p = document.createElement('p');
+        p.className = 'muted';
+        p.textContent = 'Noch keine Fragen.';
+        target.appendChild(p);
         return;
       }
+
       qs.forEach((q, idx) => {
         const div = document.createElement('div');
         div.className = 'list-item';
-
         const info = document.createElement('div');
         info.className = 'list-item-info';
-        info.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + q.timeLimit + 's)</span>';
 
-        const ul = document.createElement('ul');
-        ul.style.margin = '.4rem 0 0 1.2rem';
-        q.answers.forEach((a, i) => {
-          const li = document.createElement('li');
-          li.textContent = a;
-          if (i === q.correctIndex) { li.style.color = 'var(--good)'; li.style.fontWeight = '600'; }
-          ul.appendChild(li);
-        });
-        info.appendChild(ul);
+        const header = document.createElement('div');
+        header.style.display = 'flex';
+        header.style.flexWrap = 'wrap';
+        header.style.gap = '.5rem';
+        header.style.alignItems = 'center';
+        header.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + q.timeLimit + 's)</span> <span class="badge badge-author">' + escapeHtml(authorLabel(quiz, q.authorId)) + '</span>';
+        info.appendChild(header);
+
+        if (q.redacted) {
+          const note = document.createElement('div');
+          note.className = 'question-redacted';
+          note.textContent = '• Antworten verborgen (' + q.answersCount + ' Optionen)';
+          info.appendChild(note);
+        } else if (q.answers) {
+          const ul = document.createElement('ul');
+          ul.style.margin = '.4rem 0 0 1.2rem';
+          q.answers.forEach((a, i) => {
+            const li = document.createElement('li');
+            li.textContent = a;
+            if (i === q.correctIndex) { li.style.color = 'var(--good)'; li.style.fontWeight = '600'; }
+            ul.appendChild(li);
+          });
+          info.appendChild(ul);
+        }
 
         const btns = document.createElement('div');
         btns.className = 'list-item-actions';
-        const edit = document.createElement('button');
-        edit.textContent = 'Bearbeiten';
-        edit.className = 'secondary';
-        edit.onclick = () => startEdit(q);
-        const del = document.createElement('button');
-        del.textContent = 'Löschen';
-        del.className = 'danger';
-        del.onclick = async () => {
-          if (!confirm('Frage löschen?')) return;
-          await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(q.id), { method: 'DELETE' });
-          load();
-        };
-        btns.appendChild(edit); btns.appendChild(del);
+        const canEdit = !q.redacted && (quiz.isOwner || quiz.mode === 'open' || q.authorId === currentMe);
+        if (canEdit) {
+          const edit = document.createElement('button');
+          edit.textContent = 'Bearbeiten';
+          edit.className = 'secondary';
+          edit.onclick = () => startEdit(q);
+          const del = document.createElement('button');
+          del.textContent = 'Löschen';
+          del.className = 'danger';
+          del.onclick = async () => {
+            if (!confirm('Frage löschen?')) return;
+            try {
+              await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(q.id), { method: 'DELETE' });
+              load();
+            } catch (err) { alert(err.message); }
+          };
+          btns.appendChild(edit); btns.appendChild(del);
+        } else {
+          const note = document.createElement('span');
+          note.className = 'muted small';
+          note.textContent = 'Nur ansehen';
+          btns.appendChild(note);
+        }
 
         div.appendChild(info);
         div.appendChild(btns);
         target.appendChild(div);
       });
+    }
+
+    async function load() {
+      const meData = await api('/api/auth/me');
+      currentMe = meData.user && meData.user.id;
+      const quiz = await api('/api/quizzes/' + encodeURIComponent(quizId));
+      renderQuiz(quiz);
     }
 
     function startEdit(q) {
@@ -181,7 +432,7 @@
       $('qText').value = q.text;
       $('qTime').value = q.timeLimit;
       setAnswerCount(q.answers.length, q.answers.slice(), q.correctIndex);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: $('formCard').offsetTop - 20, behavior: 'smooth' });
     }
 
     function resetForm() {
@@ -199,13 +450,55 @@
       const msg = $('metaMsg');
       msg.textContent = '';
       try {
-        const upd = await api('/api/quizzes/' + encodeURIComponent(quizId), {
+        await api('/api/quizzes/' + encodeURIComponent(quizId), {
           method: 'PATCH',
           body: JSON.stringify({ name: $('qName').value, description: $('qDesc').value }),
         });
-        $('title').textContent = upd.name;
         msg.className = 'banner-good small spaced';
         msg.textContent = 'Gespeichert.';
+        load();
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    };
+
+    document.querySelectorAll('input[name="mode"], input[name="hostMode"]').forEach((el) => {
+      el.addEventListener('change', async () => {
+        const mode = (document.querySelector('input[name="mode"]:checked') || {}).value;
+        const hostMode = (document.querySelector('input[name="hostMode"]:checked') || {}).value;
+        const msg = $('modeMsg');
+        msg.textContent = '';
+        try {
+          await api('/api/quizzes/' + encodeURIComponent(quizId), {
+            method: 'PATCH',
+            body: JSON.stringify({ mode, hostMode }),
+          });
+          msg.className = 'banner-good small spaced';
+          msg.textContent = 'Einstellungen aktualisiert.';
+        } catch (err) {
+          msg.className = 'banner-bad small spaced';
+          msg.textContent = err.message;
+        }
+      });
+    });
+
+    $('inviteBtn').onclick = async () => {
+      const email = $('inviteEmail').value.trim();
+      const msg = $('inviteMsg');
+      msg.textContent = '';
+      if (!email) return;
+      try {
+        const data = await api('/api/quizzes/' + encodeURIComponent(quizId) + '/members', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        });
+        $('inviteEmail').value = '';
+        msg.className = 'banner-good small spaced';
+        msg.textContent = data.pending
+          ? 'Einladung gemerkt. Sobald sich diese Person registriert, wird sie automatisch hinzugefügt.'
+          : 'Mitwirkende:r hinzugefügt.';
+        renderMembers(data.members);
       } catch (err) {
         msg.className = 'banner-bad small spaced';
         msg.textContent = err.message;

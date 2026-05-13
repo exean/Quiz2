@@ -205,6 +205,7 @@ app.post('/api/auth/register', async (req, res) => {
   };
   users.push(user);
   saveUsers(users);
+  linkPendingInvitations(user);
 
   const link = baseUrl(req) + '/api/auth/verify?token=' + encodeURIComponent(verifyToken);
   try {
@@ -453,8 +454,136 @@ app.post('/api/webauthn/login/verify', async (req, res) => {
 
 /* ---------- Quizzes ---------- */
 
-function loadQuizzes() { return load(QUIZZES_FILE, []); }
+const QUIZ_MODES = ['open', 'questions-visible', 'count-only'];
+const HOST_MODES = ['owner', 'members'];
+
+function loadQuizzes() { return load(QUIZZES_FILE, []).map(normaliseQuiz); }
 function saveQuizzes(q) { save(QUIZZES_FILE, q); }
+
+function normaliseQuiz(quiz) {
+  return {
+    ...quiz,
+    mode: QUIZ_MODES.includes(quiz.mode) ? quiz.mode : 'open',
+    hostMode: HOST_MODES.includes(quiz.hostMode) ? quiz.hostMode : 'owner',
+    memberIds: Array.isArray(quiz.memberIds) ? quiz.memberIds.filter(Boolean) : [],
+    pendingEmails: Array.isArray(quiz.pendingEmails) ? quiz.pendingEmails.filter(Boolean) : [],
+    questions: (quiz.questions || []).map((q) => ({
+      ...q,
+      authorId: q.authorId || quiz.userId,
+    })),
+  };
+}
+
+function getQuizRole(quiz, userId) {
+  if (!quiz || !userId) return null;
+  if (quiz.userId === userId) return 'owner';
+  if (quiz.memberIds.includes(userId)) return 'member';
+  return null;
+}
+
+function canHost(quiz, userId) {
+  const role = getQuizRole(quiz, userId);
+  if (role === 'owner') return true;
+  if (role === 'member' && quiz.hostMode === 'members') return true;
+  return false;
+}
+
+function canEditQuestion(quiz, q, userId) {
+  const role = getQuizRole(quiz, userId);
+  if (role === 'owner') return true;
+  if (role !== 'member') return false;
+  if (quiz.mode === 'open') return true;
+  return q.authorId === userId;
+}
+
+function canSeeFullQuestion(quiz, q, userId) {
+  const role = getQuizRole(quiz, userId);
+  if (role === 'owner' || quiz.mode === 'open') return true;
+  return q.authorId === userId;
+}
+
+function getAccessibleQuizzes(userId) {
+  return loadQuizzes().filter((q) => getQuizRole(q, userId));
+}
+
+function linkPendingInvitations(user) {
+  const list = load(QUIZZES_FILE, []);
+  let changed = false;
+  for (const quiz of list) {
+    if (!Array.isArray(quiz.pendingEmails) || !quiz.pendingEmails.length) continue;
+    const idx = quiz.pendingEmails.indexOf(user.email);
+    if (idx < 0) continue;
+    quiz.pendingEmails.splice(idx, 1);
+    quiz.memberIds = Array.isArray(quiz.memberIds) ? quiz.memberIds : [];
+    if (!quiz.memberIds.includes(user.id)) quiz.memberIds.push(user.id);
+    quiz.updatedAt = new Date().toISOString();
+    changed = true;
+  }
+  if (changed) save(QUIZZES_FILE, list);
+}
+
+function authorLookup() {
+  const users = loadUsers();
+  const map = new Map();
+  for (const u of users) map.set(u.id, u.email);
+  return (id) => map.get(id) || null;
+}
+
+function viewQuestions(quiz, userId) {
+  const role = getQuizRole(quiz, userId);
+  const all = quiz.questions || [];
+  const own = all.filter((q) => q.authorId === userId);
+  const othersCount = all.length - own.length;
+
+  if (role === 'owner' || quiz.mode === 'open') {
+    return { questions: all, othersCount: 0, ownCount: own.length, totalCount: all.length };
+  }
+  if (quiz.mode === 'questions-visible') {
+    const visible = all.map((q) => {
+      if (q.authorId === userId) return q;
+      return {
+        id: q.id,
+        text: q.text,
+        timeLimit: q.timeLimit,
+        authorId: q.authorId,
+        answersCount: q.answers.length,
+        redacted: true,
+      };
+    });
+    return { questions: visible, othersCount: 0, ownCount: own.length, totalCount: all.length };
+  }
+  // count-only
+  return { questions: own, othersCount, ownCount: own.length, totalCount: all.length };
+}
+
+function memberView(quiz) {
+  const lookup = authorLookup();
+  return {
+    ownerId: quiz.userId,
+    ownerEmail: lookup(quiz.userId),
+    members: quiz.memberIds.map((id) => ({ id, email: lookup(id) })).filter((m) => m.email),
+    pendingEmails: quiz.pendingEmails.slice(),
+  };
+}
+
+function quizListEntry(quiz, userId) {
+  const role = getQuizRole(quiz, userId);
+  const all = quiz.questions || [];
+  const own = all.filter((q) => q.authorId === userId).length;
+  return {
+    id: quiz.id,
+    name: quiz.name,
+    description: quiz.description,
+    role,
+    mode: quiz.mode,
+    hostMode: quiz.hostMode,
+    canHost: canHost(quiz, userId),
+    totalQuestions: all.length,
+    ownQuestions: own,
+    createdAt: quiz.createdAt,
+    updatedAt: quiz.updatedAt,
+  };
+}
 
 function validateQuestion(q) {
   if (!q || typeof q.text !== 'string' || !q.text.trim()) return 'Fragetext fehlt';
@@ -465,19 +594,20 @@ function validateQuestion(q) {
   return null;
 }
 
-function publicQuiz(q) {
-  return {
-    id: q.id,
-    name: q.name,
-    description: q.description,
-    questionCount: (q.questions || []).length,
-    createdAt: q.createdAt,
-    updatedAt: q.updatedAt,
-  };
+function getQuizForAccess(req, role) {
+  const list = loadQuizzes();
+  const quiz = list.find((q) => q.id === req.params.id);
+  if (!quiz) return { error: 'Quiz nicht gefunden', status: 404 };
+  const userRole = getQuizRole(quiz, req.user.id);
+  if (!userRole) return { error: 'Quiz nicht gefunden', status: 404 };
+  if (role === 'owner' && userRole !== 'owner') return { error: 'Nur der Ersteller darf das', status: 403 };
+  return { quiz, list, role: userRole };
 }
 
 app.get('/api/quizzes', authMiddleware, (req, res) => {
-  const mine = loadQuizzes().filter((q) => q.userId === req.user.id).map(publicQuiz);
+  const mine = getAccessibleQuizzes(req.user.id)
+    .map((q) => quizListEntry(q, req.user.id))
+    .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   res.json(mine);
 });
 
@@ -490,32 +620,47 @@ app.post('/api/quizzes', authMiddleware, (req, res) => {
     userId: req.user.id,
     name: name.slice(0, 80),
     description: description.slice(0, 500),
+    mode: 'open',
+    hostMode: 'owner',
+    memberIds: [],
+    pendingEmails: [],
     questions: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const list = loadQuizzes();
+  const list = load(QUIZZES_FILE, []);
   list.push(quiz);
   saveQuizzes(list);
-  res.json(quiz);
+  res.json(quizListEntry(quiz, req.user.id));
 });
 
-function getOwnedQuiz(req) {
-  const list = loadQuizzes();
-  const quiz = list.find((q) => q.id === req.params.id);
-  if (!quiz || quiz.userId !== req.user.id) return { error: 'Quiz nicht gefunden' };
-  return { quiz, list };
-}
-
 app.get('/api/quizzes/:id', authMiddleware, (req, res) => {
-  const { quiz, error } = getOwnedQuiz(req);
-  if (error) return res.status(404).json({ error });
-  res.json(quiz);
+  const { quiz, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  const view = viewQuestions(quiz, req.user.id);
+  const role = getQuizRole(quiz, req.user.id);
+  res.json({
+    id: quiz.id,
+    name: quiz.name,
+    description: quiz.description,
+    mode: quiz.mode,
+    hostMode: quiz.hostMode,
+    role,
+    canHost: canHost(quiz, req.user.id),
+    isOwner: role === 'owner',
+    members: memberView(quiz),
+    questions: view.questions,
+    othersCount: view.othersCount,
+    ownCount: view.ownCount,
+    totalCount: view.totalCount,
+    createdAt: quiz.createdAt,
+    updatedAt: quiz.updatedAt,
+  });
 });
 
 app.patch('/api/quizzes/:id', authMiddleware, (req, res) => {
-  const { quiz, list, error } = getOwnedQuiz(req);
-  if (error) return res.status(404).json({ error });
+  const { quiz, list, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
   if (typeof req.body.name === 'string') {
     const name = req.body.name.trim();
     if (!name) return res.status(400).json({ error: 'Quiz-Name darf nicht leer sein' });
@@ -524,13 +669,21 @@ app.patch('/api/quizzes/:id', authMiddleware, (req, res) => {
   if (typeof req.body.description === 'string') {
     quiz.description = req.body.description.trim().slice(0, 500);
   }
+  if (typeof req.body.mode === 'string') {
+    if (!QUIZ_MODES.includes(req.body.mode)) return res.status(400).json({ error: 'Unbekannter Modus' });
+    quiz.mode = req.body.mode;
+  }
+  if (typeof req.body.hostMode === 'string') {
+    if (!HOST_MODES.includes(req.body.hostMode)) return res.status(400).json({ error: 'Unbekannter Host-Modus' });
+    quiz.hostMode = req.body.hostMode;
+  }
   quiz.updatedAt = new Date().toISOString();
   saveQuizzes(list);
-  res.json(quiz);
+  res.json({ ok: true });
 });
 
 app.delete('/api/quizzes/:id', authMiddleware, (req, res) => {
-  const list = loadQuizzes();
+  const list = load(QUIZZES_FILE, []);
   const idx = list.findIndex((q) => q.id === req.params.id && q.userId === req.user.id);
   if (idx < 0) return res.status(404).json({ error: 'Quiz nicht gefunden' });
   list.splice(idx, 1);
@@ -538,14 +691,60 @@ app.delete('/api/quizzes/:id', authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
+/* members */
+
+app.post('/api/quizzes/:id/members', authMiddleware, (req, res) => {
+  const { quiz, list, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  const email = normaliseEmail(req.body && req.body.email);
+  if (!isValidEmail(email)) return res.status(400).json({ error: 'Ungültige E-Mail' });
+  if (email === normaliseEmail(req.user.email)) return res.status(400).json({ error: 'Du bist selbst der Ersteller' });
+  const user = findUser((u) => u.email === email);
+  if (user) {
+    if (quiz.memberIds.includes(user.id)) return res.status(409).json({ error: 'Bereits Mitwirkender' });
+    quiz.memberIds.push(user.id);
+  } else {
+    if (quiz.pendingEmails.includes(email)) return res.status(409).json({ error: 'Einladung bereits gespeichert' });
+    quiz.pendingEmails.push(email);
+  }
+  quiz.updatedAt = new Date().toISOString();
+  saveQuizzes(list);
+  res.json({ ok: true, pending: !user, members: memberView(quiz) });
+});
+
+app.delete('/api/quizzes/:id/members/:key', authMiddleware, (req, res) => {
+  const list = loadQuizzes();
+  const quiz = list.find((q) => q.id === req.params.id);
+  if (!quiz) return res.status(404).json({ error: 'Quiz nicht gefunden' });
+  const key = String(req.params.key || '');
+  const isOwner = quiz.userId === req.user.id;
+  const isSelf = key === req.user.id;
+  if (!isOwner && !isSelf) return res.status(403).json({ error: 'Nicht erlaubt' });
+  const beforeM = quiz.memberIds.length;
+  const beforeP = quiz.pendingEmails.length;
+  quiz.memberIds = quiz.memberIds.filter((id) => id !== key);
+  if (isOwner) {
+    quiz.pendingEmails = quiz.pendingEmails.filter((e) => e !== normaliseEmail(key));
+  }
+  if (quiz.memberIds.length === beforeM && quiz.pendingEmails.length === beforeP) {
+    return res.status(404).json({ error: 'Nicht gefunden' });
+  }
+  quiz.updatedAt = new Date().toISOString();
+  saveQuizzes(list);
+  res.json({ ok: true, members: memberView(quiz) });
+});
+
+/* questions */
+
 app.post('/api/quizzes/:id/questions', authMiddleware, (req, res) => {
-  const { quiz, list, error } = getOwnedQuiz(req);
-  if (error) return res.status(404).json({ error });
+  const { quiz, list, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
   const err = validateQuestion(req.body);
   if (err) return res.status(400).json({ error: err });
   const time = Number(req.body.timeLimit) || 20;
   const q = {
     id: newId(),
+    authorId: req.user.id,
     text: req.body.text.trim(),
     answers: req.body.answers.map((a) => a.trim()),
     correctIndex: Number(req.body.correctIndex),
@@ -559,11 +758,14 @@ app.post('/api/quizzes/:id/questions', authMiddleware, (req, res) => {
 });
 
 app.patch('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
-  const { quiz, list, error } = getOwnedQuiz(req);
-  if (error) return res.status(404).json({ error });
+  const { quiz, list, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
   const idx = (quiz.questions || []).findIndex((q) => q.id === req.params.qid);
   if (idx < 0) return res.status(404).json({ error: 'Frage nicht gefunden' });
   const current = quiz.questions[idx];
+  if (!canEditQuestion(quiz, current, req.user.id)) {
+    return res.status(403).json({ error: 'Du darfst diese Frage nicht bearbeiten' });
+  }
   const merged = {
     ...current,
     text: req.body.text !== undefined ? String(req.body.text).trim() : current.text,
@@ -580,11 +782,15 @@ app.patch('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
 });
 
 app.delete('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
-  const { quiz, list, error } = getOwnedQuiz(req);
-  if (error) return res.status(404).json({ error });
-  const before = (quiz.questions || []).length;
-  quiz.questions = (quiz.questions || []).filter((q) => q.id !== req.params.qid);
-  if (quiz.questions.length === before) return res.status(404).json({ error: 'Frage nicht gefunden' });
+  const { quiz, list, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  const idx = (quiz.questions || []).findIndex((q) => q.id === req.params.qid);
+  if (idx < 0) return res.status(404).json({ error: 'Frage nicht gefunden' });
+  const current = quiz.questions[idx];
+  if (!canEditQuestion(quiz, current, req.user.id)) {
+    return res.status(403).json({ error: 'Du darfst diese Frage nicht löschen' });
+  }
+  quiz.questions.splice(idx, 1);
   quiz.updatedAt = new Date().toISOString();
   saveQuizzes(list);
   res.json({ ok: true });
@@ -712,8 +918,9 @@ io.on('connection', (socket) => {
 
   socket.on('host:create', async ({ quizId, origin } = {}, cb) => {
     if (!socket.data.userId) return cb && cb({ error: 'Bitte einloggen' });
-    const quiz = loadQuizzes().find((q) => q.id === quizId && q.userId === socket.data.userId);
-    if (!quiz) return cb && cb({ error: 'Quiz nicht gefunden' });
+    const quiz = loadQuizzes().find((q) => q.id === quizId);
+    if (!quiz || !getQuizRole(quiz, socket.data.userId)) return cb && cb({ error: 'Quiz nicht gefunden' });
+    if (!canHost(quiz, socket.data.userId)) return cb && cb({ error: 'Du darfst dieses Quiz nicht starten' });
     if (!quiz.questions || !quiz.questions.length) {
       return cb && cb({ error: 'Quiz hat keine Fragen' });
     }

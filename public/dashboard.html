@@ -66,9 +66,11 @@
       return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
+    let currentMe = null;
     async function loadMe() {
       const data = await api('/api/auth/me');
       if (!data.user) { location.href = '/login.html'; return; }
+      currentMe = data.user.id;
       $('userInfo').textContent = 'Eingeloggt als ' + data.user.email;
     }
 
@@ -83,17 +85,31 @@
       list.forEach((q) => {
         const div = document.createElement('div');
         div.className = 'list-item';
-        const playable = q.questionCount > 0;
+        const playable = q.totalQuestions > 0 && q.canHost;
+        const roleBadge = q.role === 'owner'
+          ? '<span class="badge badge-owner">Ersteller</span>'
+          : '<span class="badge badge-member">Mitwirkende:r</span>';
+        const countText = (q.role === 'member' && q.ownQuestions !== q.totalQuestions)
+          ? q.ownQuestions + ' eigene · ' + q.totalQuestions + ' gesamt'
+          : q.totalQuestions + ' Frage' + (q.totalQuestions === 1 ? '' : 'n');
+        const playBtn = q.canHost
+          ? '<a class="btn" href="/host.html?quiz=' + encodeURIComponent(q.id) + '" ' + (playable ? '' : 'style="opacity:.4;pointer-events:none"') + '>Spielen</a>'
+          : '';
+        const deleteBtn = q.role === 'owner'
+          ? '<button class="danger" data-del="' + q.id + '">Löschen</button>'
+          : '<button class="secondary" data-leave="' + q.id + '">Verlassen</button>';
         div.innerHTML =
           '<div class="list-item-info">' +
-            '<strong>' + escapeHtml(q.name) + '</strong> ' +
-            '<span class="muted small">(' + q.questionCount + ' Frage' + (q.questionCount === 1 ? '' : 'n') + ')</span>' +
+            '<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.2rem">' +
+              '<strong>' + escapeHtml(q.name) + '</strong>' + roleBadge +
+            '</div>' +
+            '<div class="muted small">' + countText + '</div>' +
             (q.description ? '<div class="muted small">' + escapeHtml(q.description) + '</div>' : '') +
           '</div>' +
           '<div class="list-item-actions">' +
-            '<a class="btn" href="/host.html?quiz=' + encodeURIComponent(q.id) + '" ' + (playable ? '' : 'style="opacity:.4;pointer-events:none"') + '>Spielen</a>' +
-            '<a class="btn secondary" href="/quiz-edit.html?id=' + encodeURIComponent(q.id) + '">Bearbeiten</a>' +
-            '<button class="danger" data-del="' + q.id + '">Löschen</button>' +
+            playBtn +
+            '<a class="btn secondary" href="/quiz-edit.html?id=' + encodeURIComponent(q.id) + '">' + (q.role === 'owner' ? 'Bearbeiten' : 'Öffnen') + '</a>' +
+            deleteBtn +
           '</div>';
         target.appendChild(div);
       });
@@ -101,6 +117,15 @@
         b.onclick = async () => {
           if (!confirm('Quiz wirklich löschen?')) return;
           await api('/api/quizzes/' + encodeURIComponent(b.dataset.del), { method: 'DELETE' });
+          loadQuizzes();
+        };
+      });
+      target.querySelectorAll('button[data-leave]').forEach((b) => {
+        b.onclick = async () => {
+          if (!confirm('Quiz wirklich verlassen?')) return;
+          try {
+            await api('/api/quizzes/' + encodeURIComponent(b.dataset.leave) + '/members/' + encodeURIComponent(currentMe), { method: 'DELETE' });
+          } catch (err) { alert(err.message); }
           loadQuizzes();
         };
       });
