@@ -1,0 +1,23 @@
+[
+  {
+    "id": "q1",
+    "text": "Welcher Planet ist der grösste in unserem Sonnensystem?",
+    "answers": ["Erde", "Jupiter", "Saturn", "Mars"],
+    "correctIndex": 1,
+    "timeLimit": 20
+  },
+  {
+    "id": "q2",
+    "text": "Wie viele Kontinente gibt es?",
+    "answers": ["5", "6", "7", "8"],
+    "correctIndex": 2,
+    "timeLimit": 15
+  },
+  {
+    "id": "q3",
+    "text": "Wer schrieb 'Faust'?",
+    "answers": ["Schiller", "Goethe", "Brecht", "Kafka"],
+    "correctIndex": 1,
+    "timeLimit": 20
+  }
+]

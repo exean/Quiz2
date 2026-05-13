@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Quiz · Mitspielen</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="container">
+    <div id="joinCard" class="card">
+      <h1>Mitspielen</h1>
+      <label for="pin">Game-PIN</label>
+      <input id="pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-stellig" />
+      <label for="name">Dein Name</label>
+      <input id="name" type="text" maxlength="20" placeholder="z.B. Anna" />
+      <div class="spaced"><button id="joinBtn">Beitreten</button></div>
+      <div id="joinError" class="banner-bad small spaced" hidden></div>
+    </div>
+
+    <div id="lobbyCard" class="card center" hidden>
+      <h2>Bereit! 🎉</h2>
+      <p class="muted">Hallo <strong id="meName"></strong></p>
+      <p class="muted small">Warte bis der Host das Spiel startet ...</p>
+      <h3 class="spaced">Mitspieler</h3>
+      <div id="playerList"></div>
+    </div>
+
+    <div id="questionCard" class="card" hidden>
+      <div class="flex-between">
+        <span class="muted small" id="qIndex"></span>
+        <span class="muted small" id="qTimer"></span>
+      </div>
+      <h2 id="qText"></h2>
+      <div class="timer-bar"><div id="timerBar" style="width:100%"></div></div>
+      <div id="qAnswers" class="answer-grid"></div>
+      <div id="waitMsg" class="banner-warn spaced small" hidden>Antwort abgeschickt – warte auf die anderen ...</div>
+    </div>
+
+    <div id="reviewCard" class="card center" hidden>
+      <div id="resultBanner"></div>
+      <p class="muted spaced">Dein Punktestand</p>
+      <div class="pin" id="myScore">0</div>
+      <p class="muted small">Warte auf nächste Frage ...</p>
+    </div>
+
+    <div id="endCard" class="card" hidden>
+      <h2 class="center">🏆 Endstand</h2>
+      <table id="finalBoard"></table>
+      <div class="spaced center"><a class="btn" href="/play.html">Neu beitreten</a></div>
+    </div>
+
+    <div id="cancelBanner" class="banner-warn spaced" hidden></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const socket = io();
+    let currentTimer = null;
+    let answered = false;
+
+    function show(id) {
+      ['joinCard', 'lobbyCard', 'questionCard', 'reviewCard', 'endCard'].forEach((x) => {
+        $(x).hidden = (x !== id);
+      });
+    }
+
+    const urlPin = new URLSearchParams(location.search).get('pin');
+    if (urlPin) $('pin').value = urlPin;
+
+    $('joinBtn').onclick = () => {
+      const pin = $('pin').value.trim();
+      const name = $('name').value.trim();
+      if (!pin || !name) {
+        showError('Bitte PIN und Name eingeben');
+        return;
+      }
+      socket.emit('player:join', { pin, name }, (resp) => {
+        if (resp && resp.error) return showError(resp.error);
+        $('meName').textContent = resp.name;
+        show('lobbyCard');
+      });
+    };
+    $('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
+
+    function showError(msg) {
+      $('joinError').textContent = msg;
+      $('joinError').hidden = false;
+    }
+
+    socket.on('lobby:update', (data) => {
+      const list = $('playerList');
+      list.innerHTML = '';
+      data.players.forEach((p) => {
+        const span = document.createElement('span');
+        span.className = 'player-pill';
+        span.textContent = p.name;
+        list.appendChild(span);
+      });
+    });
+
+    socket.on('question:start', (data) => {
+      answered = false;
+      show('questionCard');
+      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' / ' + data.total;
+      $('qText').textContent = data.text;
+      $('waitMsg').hidden = true;
+      const ans = $('qAnswers');
+      ans.innerHTML = '';
+      ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
+      data.answers.forEach((a, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'answer-btn c' + i;
+        btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
+        btn.onclick = () => sendAnswer(i, btn);
+        ans.appendChild(btn);
+      });
+      runTimer(data.deadline, data.timeLimit);
+    });
+
+    function sendAnswer(idx, btn) {
+      if (answered) return;
+      answered = true;
+      document.querySelectorAll('#qAnswers .answer-btn').forEach((b) => {
+        b.classList.add('dim');
+        b.disabled = true;
+      });
+      btn.classList.remove('dim');
+      btn.classList.add('selected');
+      $('waitMsg').hidden = false;
+      socket.emit('player:answer', { choice: idx }, (resp) => {
+        if (resp && resp.error) {
+          answered = false;
+          $('waitMsg').hidden = true;
+          alert(resp.error);
+        }
+      });
+    }
+
+    socket.on('question:result', (data) => {
+      show('reviewCard');
+      const banner = $('resultBanner');
+      if (data.correct) {
+        banner.className = 'banner-good';
+        banner.textContent = '✅ Richtig! +' + data.gained + ' Punkte';
+      } else {
+        banner.className = 'banner-bad';
+        banner.textContent = '❌ Leider falsch';
+      }
+      $('myScore').textContent = data.score;
+    });
+
+    socket.on('game:end', (data) => {
+      show('endCard');
+      const table = $('finalBoard');
+      table.innerHTML = '<thead><tr><th>#</th><th>Spieler</th><th class="score">Punkte</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      data.leaderboard.forEach((p, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td class="rank">' + (i + 1) + '</td><td>' + escapeHtml(p.name) + '</td><td class="score">' + p.score + '</td>';
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+    });
+
+    socket.on('game:cancelled', (data) => {
+      $('cancelBanner').textContent = data.reason || 'Spiel beendet';
+      $('cancelBanner').hidden = false;
+    });
+
+    socket.on('disconnect', () => {
+      $('cancelBanner').textContent = 'Verbindung verloren. Bitte Seite neu laden.';
+      $('cancelBanner').hidden = false;
+    });
+
+    function runTimer(deadline, total) {
+      if (currentTimer) clearInterval(currentTimer);
+      const bar = $('timerBar');
+      const txt = $('qTimer');
+      function tick() {
+        const left = Math.max(0, deadline - Date.now());
+        bar.style.width = (left / (total * 1000) * 100) + '%';
+        txt.textContent = Math.ceil(left / 1000) + ' s';
+        if (left <= 0) clearInterval(currentTimer);
+      }
+      tick();
+      currentTimer = setInterval(tick, 250);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+  </script>
+</body>
+</html>
