@@ -161,3 +161,24 @@ td.score { text-align: right; font-variant-numeric: tabular-nums; }
 .banner-warn { background: rgba(245,158,11,.15); color: var(--warn); padding: .85rem 1rem; border-radius: 10px; }
 
 .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+
+.join-info {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.qr-wrap img {
+  width: 220px;
+  height: 220px;
+  display: block;
+  background: #fff;
+  padding: 8px;
+  border-radius: 12px;
+}
+.pin-wrap { text-align: center; }
+@media (max-width: 480px) {
+  .qr-wrap img { width: 180px; height: 180px; }
+}

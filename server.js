@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
+const QRCode = require('qrcode');
 const { Server } = require('socket.io');
 const {
   generateRegistrationOptions,
@@ -709,7 +710,7 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   socket.data.role = null;
 
-  socket.on('host:create', ({ quizId } = {}, cb) => {
+  socket.on('host:create', async ({ quizId, origin } = {}, cb) => {
     if (!socket.data.userId) return cb && cb({ error: 'Bitte einloggen' });
     const quiz = loadQuizzes().find((q) => q.id === quizId && q.userId === socket.data.userId);
     if (!quiz) return cb && cb({ error: 'Quiz nicht gefunden' });
@@ -736,7 +737,28 @@ io.on('connection', (socket) => {
     socket.join(pin);
     socket.data.role = 'host';
     socket.data.pin = pin;
-    cb && cb({ pin, totalQuestions: shuffled.length, quizName: quiz.name });
+
+    const baseOrigin = (typeof origin === 'string' && /^https?:\/\//.test(origin))
+      ? origin
+      : (socket.handshake.headers.origin || '');
+    const joinUrl = baseOrigin
+      ? `${baseOrigin}/play.html?pin=${pin}`
+      : `/play.html?pin=${pin}`;
+    let qrDataUrl = null;
+    try {
+      qrDataUrl = await QRCode.toDataURL(joinUrl, { margin: 1, width: 320 });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[qr] generation failed', err.message);
+    }
+
+    cb && cb({
+      pin,
+      totalQuestions: shuffled.length,
+      quizName: quiz.name,
+      joinUrl,
+      qr: qrDataUrl,
+    });
     broadcastLobby(game);
   });
 

@@ -19,9 +19,16 @@
     <div id="lobbyCard" class="card center" hidden>
       <h2 id="lobbyName"></h2>
       <p class="muted" id="lobbyDesc"></p>
-      <p class="muted">Game-PIN</p>
-      <div class="pin" id="pinDisplay">------</div>
-      <p class="muted small">Auf <strong id="joinUrl">/play.html</strong> öffnen oder PIN eingeben</p>
+      <div class="join-info">
+        <div class="qr-wrap">
+          <img id="qrImage" alt="QR-Code zum Beitreten" hidden />
+        </div>
+        <div class="pin-wrap">
+          <p class="muted">Game-PIN</p>
+          <div class="pin" id="pinDisplay">------</div>
+          <p class="muted small">QR scannen oder<br><strong id="joinUrl">/play.html</strong> öffnen</p>
+        </div>
+      </div>
       <p class="muted small" id="totalQ"></p>
       <h3 class="spaced">Spieler</h3>
       <div id="playerList"></div>
@@ -74,16 +81,21 @@
     }
 
     $('createBtn').onclick = () => {
-      socket.emit('host:create', { quizId }, (resp) => {
+      socket.emit('host:create', { quizId, origin: location.origin }, (resp) => {
         if (resp && resp.error) {
           $('createError').textContent = resp.error;
           $('createError').hidden = false;
           return;
         }
         $('pinDisplay').textContent = resp.pin;
-        $('joinUrl').textContent = location.origin + '/play.html';
+        const joinUrl = resp.joinUrl || (location.origin + '/play.html?pin=' + resp.pin);
+        $('joinUrl').textContent = joinUrl.replace(/^https?:\/\//, '');
         $('totalQ').textContent = resp.totalQuestions + ' Fragen';
         $('lobbyName').textContent = resp.quizName;
+        if (resp.qr) {
+          $('qrImage').src = resp.qr;
+          $('qrImage').hidden = false;
+        }
         show('lobbyCard');
       });
     };
