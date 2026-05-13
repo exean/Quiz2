@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
+const multer = require('multer');
+const sharp = require('sharp');
 const { Server } = require('socket.io');
 const {
   generateRegistrationOptions,
@@ -20,9 +22,13 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const QUIZZES_FILE = path.join(DATA_DIR, 'quizzes.json');
 const CREDS_FILE = path.join(DATA_DIR, 'credentials.json');
+const LOGO_MAX_DIM = 512;
+const LOGO_MAX_BYTES = 8 * 1024 * 1024;
+const QUIZ_THEMES = ['default', 'sunset', 'ocean', 'forest', 'candy', 'mono'];
 const POINTS_BASE = 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +39,14 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser);
 app.use(express.static(path.join(__dirname, 'public')));
+
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '7d', immutable: false }));
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: LOGO_MAX_BYTES, files: 1 },
+});
 
 /* ---------- Storage ---------- */
 
@@ -465,6 +479,8 @@ function normaliseQuiz(quiz) {
     ...quiz,
     mode: QUIZ_MODES.includes(quiz.mode) ? quiz.mode : 'open',
     hostMode: HOST_MODES.includes(quiz.hostMode) ? quiz.hostMode : 'owner',
+    theme: QUIZ_THEMES.includes(quiz.theme) ? quiz.theme : 'default',
+    logo: quiz.logo || null,
     memberIds: Array.isArray(quiz.memberIds) ? quiz.memberIds.filter(Boolean) : [],
     pendingEmails: Array.isArray(quiz.pendingEmails) ? quiz.pendingEmails.filter(Boolean) : [],
     questions: (quiz.questions || []).map((q) => ({
@@ -472,6 +488,11 @@ function normaliseQuiz(quiz) {
       authorId: q.authorId || quiz.userId,
     })),
   };
+}
+
+function logoUrl(quiz) {
+  if (!quiz.logo) return null;
+  return '/uploads/' + quiz.logo;
 }
 
 function getQuizRole(quiz, userId) {
@@ -577,6 +598,8 @@ function quizListEntry(quiz, userId) {
     role,
     mode: quiz.mode,
     hostMode: quiz.hostMode,
+    theme: quiz.theme,
+    logo: logoUrl(quiz),
     canHost: canHost(quiz, userId),
     totalQuestions: all.length,
     ownQuestions: own,
@@ -645,6 +668,8 @@ app.get('/api/quizzes/:id', authMiddleware, (req, res) => {
     description: quiz.description,
     mode: quiz.mode,
     hostMode: quiz.hostMode,
+    theme: quiz.theme,
+    logo: logoUrl(quiz),
     role,
     canHost: canHost(quiz, req.user.id),
     isOwner: role === 'owner',
@@ -677,6 +702,10 @@ app.patch('/api/quizzes/:id', authMiddleware, (req, res) => {
     if (!HOST_MODES.includes(req.body.hostMode)) return res.status(400).json({ error: 'Unbekannter Host-Modus' });
     quiz.hostMode = req.body.hostMode;
   }
+  if (typeof req.body.theme === 'string') {
+    if (!QUIZ_THEMES.includes(req.body.theme)) return res.status(400).json({ error: 'Unbekanntes Theme' });
+    quiz.theme = req.body.theme;
+  }
   quiz.updatedAt = new Date().toISOString();
   saveQuizzes(list);
   res.json({ ok: true });
@@ -686,9 +715,62 @@ app.delete('/api/quizzes/:id', authMiddleware, (req, res) => {
   const list = load(QUIZZES_FILE, []);
   const idx = list.findIndex((q) => q.id === req.params.id && q.userId === req.user.id);
   if (idx < 0) return res.status(404).json({ error: 'Quiz nicht gefunden' });
+  const removed = list[idx];
   list.splice(idx, 1);
   saveQuizzes(list);
+  if (removed.logo) {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, removed.logo)); } catch (_) { /* ignore */ }
+  }
   res.json({ ok: true });
+});
+
+/* logo upload */
+
+app.post('/api/quizzes/:id/logo', authMiddleware, upload.single('logo'), async (req, res) => {
+  const { quiz, list, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'Kein Bild übermittelt' });
+  try {
+    const meta = await sharp(req.file.buffer).metadata();
+    if (!meta.format) return res.status(400).json({ error: 'Datei ist kein gültiges Bild' });
+    const filename = quiz.id + '-' + Date.now().toString(36) + '.png';
+    const filePath = path.join(UPLOADS_DIR, filename);
+    await sharp(req.file.buffer, { failOn: 'none' })
+      .rotate()
+      .resize({ width: LOGO_MAX_DIM, height: LOGO_MAX_DIM, fit: 'inside', withoutEnlargement: true })
+      .png({ compressionLevel: 9 })
+      .toFile(filePath);
+    // remove previous logo file
+    if (quiz.logo && quiz.logo !== filename) {
+      try { fs.unlinkSync(path.join(UPLOADS_DIR, quiz.logo)); } catch (_) { /* ignore */ }
+    }
+    quiz.logo = filename;
+    quiz.updatedAt = new Date().toISOString();
+    saveQuizzes(list);
+    res.json({ ok: true, logo: '/uploads/' + filename });
+  } catch (err) {
+    res.status(400).json({ error: 'Bild konnte nicht verarbeitet werden: ' + err.message });
+  }
+});
+
+app.delete('/api/quizzes/:id/logo', authMiddleware, (req, res) => {
+  const { quiz, list, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  if (quiz.logo) {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, quiz.logo)); } catch (_) { /* ignore */ }
+  }
+  quiz.logo = null;
+  quiz.updatedAt = new Date().toISOString();
+  saveQuizzes(list);
+  res.json({ ok: true });
+});
+
+// Catch multer file-size errors with a friendly message
+app.use((err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ error: 'Datei ist zu groß (max ' + Math.round(LOGO_MAX_BYTES / 1024 / 1024) + ' MB)' });
+  }
+  next(err);
 });
 
 /* members */
@@ -817,6 +899,8 @@ function broadcastLobby(game) {
     pin: game.pin,
     quizName: game.quizName,
     quizDescription: game.quizDescription,
+    theme: game.theme,
+    logo: game.logo,
     players: publicPlayers(game),
     totalQuestions: game.questions.length,
   });
@@ -933,6 +1017,8 @@ io.on('connection', (socket) => {
       players: new Map(),
       quizName: quiz.name,
       quizDescription: quiz.description,
+      theme: quiz.theme,
+      logo: logoUrl(quiz),
       questions: shuffled,
       currentIndex: -1,
       state: 'lobby',
@@ -963,6 +1049,8 @@ io.on('connection', (socket) => {
       pin,
       totalQuestions: shuffled.length,
       quizName: quiz.name,
+      theme: quiz.theme,
+      logo: logoUrl(quiz),
       joinUrl,
       qr: qrDataUrl,
     });
@@ -983,7 +1071,7 @@ io.on('connection', (socket) => {
     socket.join(game.pin);
     socket.data.role = 'player';
     socket.data.pin = game.pin;
-    cb && cb({ ok: true, pin: game.pin, name: clean, quizName: game.quizName });
+    cb && cb({ ok: true, pin: game.pin, name: clean, quizName: game.quizName, theme: game.theme, logo: game.logo });
     broadcastLobby(game);
   });
 

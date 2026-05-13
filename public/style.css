@@ -77,21 +77,61 @@ body {
 .orb-1 {
   width: 60vmax; height: 60vmax;
   top: -20vmax; left: -20vmax;
-  background: radial-gradient(circle at 50% 50%, #a855f7 0%, transparent 70%);
+  background: radial-gradient(circle at 50% 50%, var(--accent-2) 0%, transparent 70%);
   animation: orb-1 32s ease-in-out infinite alternate;
 }
 .orb-2 {
   width: 50vmax; height: 50vmax;
   bottom: -20vmax; right: -15vmax;
-  background: radial-gradient(circle at 50% 50%, #22d3ee 0%, transparent 70%);
+  background: radial-gradient(circle at 50% 50%, var(--accent-1) 0%, transparent 70%);
   animation: orb-2 38s ease-in-out infinite alternate;
 }
 .orb-3 {
   width: 36vmax; height: 36vmax;
   top: 35%; left: 45%;
-  background: radial-gradient(circle at 50% 50%, #ec4899 0%, transparent 70%);
+  background: radial-gradient(circle at 50% 50%, var(--accent-3) 0%, transparent 70%);
   opacity: 0.35;
   animation: orb-3 44s ease-in-out infinite alternate;
+}
+
+/* ====================================================================
+   Theme presets (per quiz)
+   ==================================================================== */
+
+[data-theme="sunset"] {
+  --accent-1: #fb923c;
+  --accent-2: #ef4444;
+  --accent-3: #facc15;
+  --shadow-pop: 0 8px 24px rgba(239, 68, 68, 0.35);
+  --shadow-glow: 0 0 40px rgba(251, 146, 60, 0.45);
+}
+[data-theme="ocean"] {
+  --accent-1: #38bdf8;
+  --accent-2: #0ea5e9;
+  --accent-3: #06b6d4;
+  --shadow-pop: 0 8px 24px rgba(56, 189, 248, 0.35);
+  --shadow-glow: 0 0 40px rgba(56, 189, 248, 0.45);
+}
+[data-theme="forest"] {
+  --accent-1: #4ade80;
+  --accent-2: #10b981;
+  --accent-3: #84cc16;
+  --shadow-pop: 0 8px 24px rgba(16, 185, 129, 0.35);
+  --shadow-glow: 0 0 40px rgba(74, 222, 128, 0.45);
+}
+[data-theme="candy"] {
+  --accent-1: #f472b6;
+  --accent-2: #ec4899;
+  --accent-3: #a855f7;
+  --shadow-pop: 0 8px 24px rgba(236, 72, 153, 0.35);
+  --shadow-glow: 0 0 40px rgba(244, 114, 182, 0.45);
+}
+[data-theme="mono"] {
+  --accent-1: #94a3b8;
+  --accent-2: #cbd5e1;
+  --accent-3: #f8fafc;
+  --shadow-pop: 0 8px 24px rgba(148, 163, 184, 0.25);
+  --shadow-glow: 0 0 40px rgba(203, 213, 225, 0.3);
 }
 @keyframes orb-1 {
   0%   { transform: translate3d(0, 0, 0) scale(1); }
@@ -214,12 +254,12 @@ button, .btn {
   gap: .4rem;
   letter-spacing: .005em;
   transition: transform .15s var(--ease), box-shadow .2s var(--ease), filter .2s, background .25s var(--ease);
-  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.35);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-2) 35%, transparent);
   font-family: inherit;
 }
 button:hover, .btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 28px rgba(168, 85, 247, 0.45);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--accent-2) 45%, transparent);
   filter: brightness(1.08);
 }
 button:active, .btn:active { transform: translateY(0); filter: brightness(.96); }
@@ -314,11 +354,11 @@ input[type="radio"] { width: auto; margin-right: .35rem; accent-color: var(--acc
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-  filter: drop-shadow(0 0 24px rgba(168, 85, 247, 0.45));
+  filter: drop-shadow(0 0 24px color-mix(in srgb, var(--accent-2) 45%, transparent));
   animation: pin-pulse 4s ease-in-out infinite;
 }
 @keyframes pin-pulse {
-  50% { filter: drop-shadow(0 0 36px rgba(34, 211, 238, 0.7)); }
+  50% { filter: drop-shadow(0 0 36px color-mix(in srgb, var(--accent-1) 70%, transparent)); }
 }
 
 /* ====================================================================
@@ -439,7 +479,7 @@ button.answer-btn:active { transform: translateY(0); filter: brightness(.95); }
   background-size: 200% 100%;
   transition: width 1s linear;
   border-radius: 999px;
-  box-shadow: 0 0 14px rgba(168, 85, 247, 0.55);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-2) 55%, transparent);
   animation: timer-shimmer 2.5s linear infinite;
 }
 @keyframes timer-shimmer {
@@ -469,7 +509,7 @@ button.answer-btn:active { transform: translateY(0); filter: brightness(.95); }
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
   margin-right: .55rem;
-  box-shadow: 0 0 8px rgba(168, 85, 247, .6);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-2) 60%, transparent);
 }
 @keyframes pill-pop {
   from { opacity: 0; transform: translateY(4px) scale(.85); }
@@ -568,8 +608,51 @@ tbody tr:last-child td { border-bottom: none; }
   padding: 12px;
   background: #fff;
   border-radius: 16px;
-  box-shadow: 0 14px 44px rgba(34, 211, 238, 0.25), 0 0 0 1px rgba(255,255,255,.1);
+  box-shadow: 0 14px 44px color-mix(in srgb, var(--accent-1) 25%, transparent), 0 0 0 1px rgba(255,255,255,.1);
   position: relative;
+}
+
+.quiz-logo {
+  max-width: 180px;
+  max-height: 120px;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 0 auto 1rem;
+  border-radius: 14px;
+  filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--accent-2) 35%, transparent));
+}
+
+.theme-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: .6rem;
+}
+.theme-swatch {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .7rem .85rem;
+  cursor: pointer;
+  transition: border-color .15s, transform .15s;
+  background: var(--surface-strong);
+}
+.theme-swatch:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.theme-swatch input { position: absolute; opacity: 0; pointer-events: none; }
+.theme-swatch:has(input:checked) { border-color: rgba(255,255,255,.55); box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.theme-swatch .dots {
+  display: flex;
+  gap: .25rem;
+  margin-bottom: .4rem;
+}
+.theme-swatch .dot {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.2);
+}
+.theme-swatch .label {
+  font-size: .82rem;
+  font-weight: 600;
 }
 .qr-wrap::after {
   content: '';

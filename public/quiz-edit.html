@@ -30,6 +30,28 @@
       <div id="metaMsg" class="small spaced"></div>
     </div>
 
+    <div class="card" id="brandCard" hidden>
+      <h2>Logo &amp; Theme</h2>
+      <p class="muted small">Logo und Farbschema werden den Spielern beim Beitreten gezeigt.</p>
+
+      <div id="logoPreviewWrap" style="text-align:center;margin:1rem 0" hidden>
+        <img id="logoPreview" alt="Logo" class="quiz-logo" />
+      </div>
+
+      <div class="row">
+        <label for="logoInput" class="btn secondary" style="cursor:pointer;flex:1 1 auto">📁 Logo hochladen
+          <input id="logoInput" type="file" accept="image/*" style="display:none" />
+        </label>
+        <button id="removeLogoBtn" class="danger" type="button" hidden style="flex:0 0 auto">Entfernen</button>
+      </div>
+      <p class="muted small" style="margin-top:.4rem">JPEG, PNG oder WebP – wird automatisch auf max. 512 × 512 verkleinert.</p>
+      <div id="logoMsg" class="small spaced"></div>
+
+      <h3 class="spaced">Theme</h3>
+      <div class="theme-swatches" id="themeSwatches"></div>
+      <div id="themeMsg" class="small spaced"></div>
+    </div>
+
     <div class="card" id="modeCard" hidden>
       <h2>Sichtbarkeit für Mitwirkende</h2>
       <p class="muted small">Bestimmt, was andere User sehen und bearbeiten dürfen.</p>
@@ -183,6 +205,66 @@
     let currentMe = null;
     let currentQuiz = null;
 
+    const THEMES = [
+      { key: 'default', label: 'Default', colors: ['#22d3ee', '#a855f7', '#ec4899'] },
+      { key: 'sunset',  label: 'Sunset',  colors: ['#fb923c', '#ef4444', '#facc15'] },
+      { key: 'ocean',   label: 'Ocean',   colors: ['#38bdf8', '#0ea5e9', '#06b6d4'] },
+      { key: 'forest',  label: 'Forest',  colors: ['#4ade80', '#10b981', '#84cc16'] },
+      { key: 'candy',   label: 'Candy',   colors: ['#f472b6', '#ec4899', '#a855f7'] },
+      { key: 'mono',    label: 'Monochrom', colors: ['#94a3b8', '#cbd5e1', '#f8fafc'] },
+    ];
+
+    function renderThemeSwatches(selected) {
+      const target = $('themeSwatches');
+      target.innerHTML = '';
+      THEMES.forEach((t) => {
+        const lab = document.createElement('label');
+        lab.className = 'theme-swatch';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'theme';
+        input.value = t.key;
+        if (t.key === selected) input.checked = true;
+        input.addEventListener('change', () => saveTheme(t.key));
+        const dots = document.createElement('div');
+        dots.className = 'dots';
+        t.colors.forEach((c) => {
+          const dot = document.createElement('div');
+          dot.className = 'dot';
+          dot.style.background = c;
+          dots.appendChild(dot);
+        });
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.textContent = t.label;
+        lab.appendChild(input);
+        lab.appendChild(dots);
+        lab.appendChild(label);
+        target.appendChild(lab);
+      });
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme || 'default';
+    }
+
+    async function saveTheme(theme) {
+      applyTheme(theme);
+      const msg = $('themeMsg');
+      msg.textContent = '';
+      try {
+        await api('/api/quizzes/' + encodeURIComponent(quizId), {
+          method: 'PATCH',
+          body: JSON.stringify({ theme }),
+        });
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Theme gespeichert.';
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    }
+
     async function api(path, opts = {}) {
       const res = await fetch(path, {
         ...opts, credentials: 'include',
@@ -261,10 +343,14 @@
       })[quiz.mode] || quiz.mode;
       $('subtitle').innerHTML = badge + ' &nbsp; <span class="muted">' + modeLabel + '</span>';
 
+      // Theme: apply for preview (everyone sees the quiz's theme)
+      applyTheme(quiz.theme);
+
       // Owner-only sections
       $('metaCard').hidden = !quiz.isOwner;
       $('modeCard').hidden = !quiz.isOwner;
       $('membersCard').hidden = !quiz.isOwner;
+      $('brandCard').hidden = !quiz.isOwner;
 
       if (quiz.isOwner) {
         $('qName').value = quiz.name;
@@ -274,6 +360,8 @@
         const hostRadio = document.querySelector('input[name="hostMode"][value="' + quiz.hostMode + '"]');
         if (hostRadio) hostRadio.checked = true;
         renderMembers(quiz.members);
+        renderThemeSwatches(quiz.theme);
+        renderLogo(quiz.logo);
       }
 
       // Form: everyone (owner & member) can add own questions
@@ -445,6 +533,60 @@
     }
 
     $('cancelEditBtn').onclick = resetForm;
+
+    function renderLogo(url) {
+      if (url) {
+        const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+        $('logoPreview').src = bust;
+        $('logoPreviewWrap').hidden = false;
+        $('removeLogoBtn').hidden = false;
+      } else {
+        $('logoPreview').removeAttribute('src');
+        $('logoPreviewWrap').hidden = true;
+        $('removeLogoBtn').hidden = true;
+      }
+    }
+
+    $('logoInput').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const msg = $('logoMsg');
+      msg.textContent = '';
+      const fd = new FormData();
+      fd.append('logo', file);
+      try {
+        const res = await fetch('/api/quizzes/' + encodeURIComponent(quizId) + '/logo', {
+          method: 'POST',
+          credentials: 'include',
+          body: fd,
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+        renderLogo(body.logo);
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Logo hochgeladen.';
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      } finally {
+        e.target.value = '';
+      }
+    });
+
+    $('removeLogoBtn').onclick = async () => {
+      if (!confirm('Logo entfernen?')) return;
+      try {
+        await api('/api/quizzes/' + encodeURIComponent(quizId) + '/logo', { method: 'DELETE' });
+        renderLogo(null);
+        const msg = $('logoMsg');
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Logo entfernt.';
+      } catch (err) {
+        const msg = $('logoMsg');
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    };
 
     $('saveMetaBtn').onclick = async () => {
       const msg = $('metaMsg');

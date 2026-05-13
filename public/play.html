@@ -23,6 +23,7 @@
     </div>
 
     <div id="lobbyCard" class="card center" hidden>
+      <img id="lobbyLogo" class="quiz-logo" alt="" hidden />
       <h2>Bereit! 🎉</h2>
       <p class="muted">Hallo <strong id="meName"></strong></p>
       <p class="muted small" id="lobbyQuiz"></p>
@@ -74,6 +75,16 @@
     const urlPin = new URLSearchParams(location.search).get('pin');
     if (urlPin) $('pin').value = urlPin;
 
+    function applyBrand(theme, logo) {
+      document.documentElement.dataset.theme = theme || 'default';
+      if (logo) {
+        $('lobbyLogo').src = logo;
+        $('lobbyLogo').hidden = false;
+      } else {
+        $('lobbyLogo').hidden = true;
+      }
+    }
+
     $('joinBtn').onclick = () => {
       const pin = $('pin').value.trim();
       const name = $('name').value.trim();
@@ -84,6 +95,7 @@
       socket.emit('player:join', { pin, name }, (resp) => {
         if (resp && resp.error) return showError(resp.error);
         $('meName').textContent = resp.name;
+        applyBrand(resp.theme, resp.logo);
         show('lobbyCard');
       });
     };
@@ -96,6 +108,7 @@
 
     socket.on('lobby:update', (data) => {
       if (data.quizName) $('lobbyQuiz').textContent = 'Quiz: ' + data.quizName;
+      applyBrand(data.theme, data.logo);
       const list = $('playerList');
       list.innerHTML = '';
       data.players.forEach((p) => {

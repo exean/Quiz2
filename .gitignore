@@ -6,3 +6,5 @@ npm-debug.log
 data/users.json
 data/quizzes.json
 data/credentials.json
+data/uploads/*
+!data/uploads/.gitkeep

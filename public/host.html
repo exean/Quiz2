@@ -21,6 +21,7 @@
     </div>
 
     <div id="lobbyCard" class="card center" hidden>
+      <img id="lobbyLogo" class="quiz-logo" alt="" hidden />
       <h2 id="lobbyName"></h2>
       <p class="muted" id="lobbyDesc"></p>
       <div class="join-info">
@@ -84,6 +85,16 @@
       });
     }
 
+    function applyBrand(theme, logo) {
+      document.documentElement.dataset.theme = theme || 'default';
+      if (logo) {
+        $('lobbyLogo').src = logo;
+        $('lobbyLogo').hidden = false;
+      } else {
+        $('lobbyLogo').hidden = true;
+      }
+    }
+
     $('createBtn').onclick = () => {
       socket.emit('host:create', { quizId, origin: location.origin }, (resp) => {
         if (resp && resp.error) {
@@ -96,6 +107,7 @@
         $('joinUrl').textContent = joinUrl.replace(/^https?:\/\//, '');
         $('totalQ').textContent = resp.totalQuestions + ' Fragen';
         $('lobbyName').textContent = resp.quizName;
+        applyBrand(resp.theme, resp.logo);
         if (resp.qr) {
           $('qrImage').src = resp.qr;
           $('qrImage').hidden = false;
@@ -106,6 +118,7 @@
 
     socket.on('lobby:update', (data) => {
       if (data.quizDescription) $('lobbyDesc').textContent = data.quizDescription;
+      applyBrand(data.theme, data.logo);
       const list = $('playerList');
       list.innerHTML = '';
       if (!data.players.length) {
