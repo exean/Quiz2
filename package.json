@@ -1,7 +1,7 @@
 {
   "name": "multiplayer-quiz",
-  "version": "1.0.0",
-  "description": "Multiplayer-Quiz mit synchronisierten Fragen und Live-Punkten",
+  "version": "2.0.0",
+  "description": "Multiplayer-Quiz mit User-Accounts (E-Mail-Verify + Passkey), eigenen Quizzes pro User",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,7 +10,10 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^10.0.1",
+    "bcryptjs": "^2.4.3",
     "express": "^4.19.2",
+    "nodemailer": "^6.9.13",
     "socket.io": "^4.7.5"
   }
 }

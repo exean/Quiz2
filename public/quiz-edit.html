@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz · Bearbeiten</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="card flex-between">
+      <h1 id="title">Quiz</h1>
+      <a class="btn secondary" href="/dashboard.html">Zurück</a>
+    </div>
+
+    <div class="card">
+      <h2>Stammdaten</h2>
+      <label for="qName">Name</label>
+      <input id="qName" type="text" maxlength="80" />
+      <label for="qDesc">Beschreibung</label>
+      <input id="qDesc" type="text" maxlength="500" />
+      <div class="spaced"><button id="saveMetaBtn">Speichern</button></div>
+      <div id="metaMsg" class="small spaced"></div>
+    </div>
+
+    <div class="card">
+      <h2 id="addTitle">Neue Frage</h2>
+      <input type="hidden" id="editingId" />
+      <label for="qText">Frage</label>
+      <input id="qText" type="text" />
+      <div id="answersList"></div>
+      <div class="row spaced">
+        <button id="addAnswerBtn" class="secondary" type="button">+ Antwort</button>
+        <button id="removeAnswerBtn" class="secondary" type="button">– Antwort</button>
+      </div>
+      <label for="qTime" class="spaced">Zeitlimit (Sekunden)</label>
+      <input id="qTime" type="number" value="20" min="5" max="120" />
+      <div class="row spaced">
+        <button id="saveQBtn">Frage speichern</button>
+        <button id="cancelEditBtn" class="secondary" type="button" hidden>Abbrechen</button>
+      </div>
+      <div id="formMsg" class="small spaced"></div>
+    </div>
+
+    <div class="card">
+      <h2>Fragen</h2>
+      <div id="questionList"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const quizId = params.get('id');
+    if (!quizId) location.href = '/dashboard.html';
+
+    let answerCount = 0;
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts, credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      });
+      if (res.status === 401) { location.href = '/login.html'; throw new Error('unauth'); }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function renderAnswers(values, correctIdx) {
+      const list = $('answersList');
+      list.innerHTML = '';
+      for (let i = 0; i < answerCount; i++) {
+        const wrap = document.createElement('div');
+        wrap.style.marginTop = '.5rem';
+        const lab = document.createElement('label');
+        lab.textContent = 'Antwort ' + (i + 1);
+        const row = document.createElement('div');
+        row.className = 'row';
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'answer-input';
+        inp.dataset.idx = i;
+        if (values && values[i] !== undefined) inp.value = values[i];
+        const radWrap = document.createElement('label');
+        radWrap.style.flex = '0 0 auto';
+        radWrap.style.alignSelf = 'center';
+        radWrap.style.margin = '0';
+        radWrap.style.color = 'var(--text)';
+        const rad = document.createElement('input');
+        rad.type = 'radio';
+        rad.name = 'correct';
+        rad.value = i;
+        if ((correctIdx !== undefined && i === correctIdx) || (correctIdx === undefined && i === 0)) rad.checked = true;
+        radWrap.appendChild(rad);
+        radWrap.appendChild(document.createTextNode(' richtig'));
+        row.appendChild(inp);
+        row.appendChild(radWrap);
+        wrap.appendChild(lab);
+        wrap.appendChild(row);
+        list.appendChild(wrap);
+      }
+    }
+
+    function setAnswerCount(n, valuesOverride, correctOverride) {
+      const prev = valuesOverride || Array.from(document.querySelectorAll('.answer-input')).map((i) => i.value);
+      const correct = correctOverride !== undefined ? correctOverride : Number((document.querySelector('input[name="correct"]:checked') || {}).value || 0);
+      answerCount = Math.max(2, Math.min(6, n));
+      renderAnswers(prev, Math.min(correct, answerCount - 1));
+    }
+
+    async function load() {
+      const quiz = await api('/api/quizzes/' + encodeURIComponent(quizId));
+      $('title').textContent = quiz.name;
+      $('qName').value = quiz.name;
+      $('qDesc').value = quiz.description || '';
+      renderQuestionList(quiz.questions || []);
+    }
+
+    function renderQuestionList(qs) {
+      const target = $('questionList');
+      target.innerHTML = '';
+      if (!qs.length) {
+        target.innerHTML = '<p class="muted">Noch keine Fragen.</p>';
+        return;
+      }
+      qs.forEach((q, idx) => {
+        const div = document.createElement('div');
+        div.style.borderBottom = '1px solid #334155';
+        div.style.padding = '.6rem 0';
+        const top = document.createElement('div');
+        top.className = 'flex-between';
+        top.innerHTML = '<div><strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + q.timeLimit + 's)</span></div>';
+        const btns = document.createElement('div');
+        btns.className = 'row';
+        const edit = document.createElement('button');
+        edit.textContent = 'Bearbeiten';
+        edit.className = 'secondary';
+        edit.onclick = () => startEdit(q);
+        const del = document.createElement('button');
+        del.textContent = 'Löschen';
+        del.className = 'danger';
+        del.onclick = async () => {
+          if (!confirm('Frage löschen?')) return;
+          await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(q.id), { method: 'DELETE' });
+          load();
+        };
+        btns.appendChild(edit); btns.appendChild(del);
+        top.appendChild(btns);
+        div.appendChild(top);
+
+        const ul = document.createElement('ul');
+        ul.style.margin = '.4rem 0 0 1.2rem';
+        q.answers.forEach((a, i) => {
+          const li = document.createElement('li');
+          li.textContent = a;
+          if (i === q.correctIndex) { li.style.color = 'var(--good)'; li.style.fontWeight = '600'; }
+          ul.appendChild(li);
+        });
+        div.appendChild(ul);
+        target.appendChild(div);
+      });
+    }
+
+    function startEdit(q) {
+      $('editingId').value = q.id;
+      $('addTitle').textContent = 'Frage bearbeiten';
+      $('cancelEditBtn').hidden = false;
+      $('qText').value = q.text;
+      $('qTime').value = q.timeLimit;
+      setAnswerCount(q.answers.length, q.answers.slice(), q.correctIndex);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function resetForm() {
+      $('editingId').value = '';
+      $('addTitle').textContent = 'Neue Frage';
+      $('cancelEditBtn').hidden = true;
+      $('qText').value = '';
+      $('qTime').value = 20;
+      setAnswerCount(4, ['', '', '', ''], 0);
+    }
+
+    $('cancelEditBtn').onclick = resetForm;
+
+    $('saveMetaBtn').onclick = async () => {
+      const msg = $('metaMsg');
+      msg.textContent = '';
+      try {
+        const upd = await api('/api/quizzes/' + encodeURIComponent(quizId), {
+          method: 'PATCH',
+          body: JSON.stringify({ name: $('qName').value, description: $('qDesc').value }),
+        });
+        $('title').textContent = upd.name;
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Gespeichert.';
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    };
+
+    $('addAnswerBtn').onclick = () => setAnswerCount(answerCount + 1);
+    $('removeAnswerBtn').onclick = () => setAnswerCount(answerCount - 1);
+
+    $('saveQBtn').onclick = async () => {
+      const msg = $('formMsg');
+      msg.textContent = '';
+      const text = $('qText').value.trim();
+      const answers = Array.from(document.querySelectorAll('.answer-input')).map((i) => i.value.trim());
+      const correctIndex = Number((document.querySelector('input[name="correct"]:checked') || {}).value || 0);
+      const timeLimit = Number($('qTime').value) || 20;
+      const editing = $('editingId').value;
+      try {
+        if (editing) {
+          await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(editing), {
+            method: 'PATCH',
+            body: JSON.stringify({ text, answers, correctIndex, timeLimit }),
+          });
+        } else {
+          await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions', {
+            method: 'POST',
+            body: JSON.stringify({ text, answers, correctIndex, timeLimit }),
+          });
+        }
+        resetForm();
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Frage gespeichert.';
+        load();
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    };
+
+    resetForm();
+    load();
+  </script>
+</body>
+</html>

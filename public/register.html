@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz · Registrieren</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="card flex-between">
+      <h1>Account anlegen</h1>
+      <a class="btn secondary" href="/login.html">Zurück</a>
+    </div>
+
+    <div class="card">
+      <label for="email">E-Mail</label>
+      <input id="email" type="email" autocomplete="username" />
+      <label for="password">Passwort (min. 8 Zeichen)</label>
+      <input id="password" type="password" autocomplete="new-password" />
+      <div class="spaced">
+        <button id="regBtn">Registrieren</button>
+      </div>
+      <div id="msg" class="small spaced"></div>
+      <p class="muted small spaced">
+        Du bekommst eine E-Mail mit einem Bestätigungslink. Erst danach ist der Account aktiv.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    function showMsg(text, kind, link) {
+      const el = $('msg');
+      el.className = (kind === 'good' ? 'banner-good' : 'banner-bad') + ' small spaced';
+      el.innerHTML = '';
+      el.appendChild(document.createTextNode(text));
+      if (link) {
+        const br = document.createElement('br');
+        const a = document.createElement('a');
+        a.href = link; a.textContent = link;
+        el.appendChild(br); el.appendChild(a);
+      }
+    }
+
+    async function register() {
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      if (!email || !password) return showMsg('Bitte E-Mail und Passwort eingeben', 'bad');
+      const res = await fetch('/api/auth/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return showMsg(body.error || 'Registrierung fehlgeschlagen', 'bad');
+      if (body.devLink) {
+        showMsg('Registriert. SMTP nicht konfiguriert – Bestätigungslink:', 'good', body.devLink);
+      } else {
+        showMsg(body.message || 'Registriert. Prüfe deine E-Mails.', 'good');
+      }
+    }
+
+    $('regBtn').onclick = register;
+    $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') register(); });
+  </script>
+</body>
+</html>

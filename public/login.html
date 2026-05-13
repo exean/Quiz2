@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz · Login</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="card flex-between">
+      <h1>Anmelden</h1>
+      <a class="btn secondary" href="/">Zurück</a>
+    </div>
+
+    <div id="verifyMsg" class="card" hidden></div>
+
+    <div class="card">
+      <h2>Mit E-Mail &amp; Passwort</h2>
+      <label for="email">E-Mail</label>
+      <input id="email" type="email" autocomplete="username" />
+      <label for="password">Passwort</label>
+      <input id="password" type="password" autocomplete="current-password" />
+      <div class="row spaced">
+        <button id="loginBtn">Anmelden</button>
+        <button id="passkeyBtn" class="secondary" type="button">🔑 Mit Passkey anmelden</button>
+      </div>
+      <div id="msg" class="small spaced"></div>
+      <p class="muted small spaced">
+        Noch kein Account? <a href="/register.html">Jetzt registrieren</a>
+      </p>
+      <p class="muted small" id="resendWrap" hidden>
+        Bestätigungsmail nicht erhalten? <a href="#" id="resendLink">Erneut senden</a>
+      </p>
+    </div>
+  </div>
+
+  <script src="/webauthn.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const verify = params.get('verify');
+    if (verify) {
+      const m = $('verifyMsg');
+      m.hidden = false;
+      if (verify === 'ok') { m.className = 'card banner-good'; m.textContent = 'E-Mail bestätigt – du kannst dich jetzt einloggen.'; }
+      else if (verify === 'expired') { m.className = 'card banner-bad'; m.textContent = 'Bestätigungslink abgelaufen. Bitte erneut senden.'; }
+      else { m.className = 'card banner-bad'; m.textContent = 'Bestätigungslink ungültig.'; }
+    }
+
+    function showMsg(text, kind) {
+      const el = $('msg');
+      el.className = (kind === 'good' ? 'banner-good' : 'banner-bad') + ' small spaced';
+      el.textContent = text;
+    }
+
+    async function loginWithPassword() {
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      if (!email || !password) return showMsg('Bitte E-Mail und Passwort eingeben', 'bad');
+      const res = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, password }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showMsg(body.error || 'Login fehlgeschlagen', 'bad');
+        if (body.code === 'unverified') {
+          $('resendWrap').hidden = false;
+        }
+        return;
+      }
+      location.href = '/dashboard.html';
+    }
+
+    $('loginBtn').onclick = loginWithPassword;
+    $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') loginWithPassword(); });
+
+    if (!window.webauthnSupported()) {
+      $('passkeyBtn').disabled = true;
+      $('passkeyBtn').title = 'Browser unterstützt keine Passkeys';
+    }
+
+    $('passkeyBtn').onclick = async () => {
+      try {
+        await window.webauthnLogin($('email').value.trim());
+        location.href = '/dashboard.html';
+      } catch (err) {
+        showMsg('Passkey-Login fehlgeschlagen: ' + err.message, 'bad');
+      }
+    };
+
+    $('resendLink').onclick = async (e) => {
+      e.preventDefault();
+      const email = $('email').value.trim();
+      if (!email) return showMsg('Erst E-Mail eingeben', 'bad');
+      await fetch('/api/auth/resend', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      showMsg('Falls ein Account existiert, wurde der Link erneut gesendet.', 'good');
+    };
+  </script>
+</body>
+</html>

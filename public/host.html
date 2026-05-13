@@ -9,13 +9,16 @@
 <body>
   <div class="container">
     <div id="startCard" class="card center">
-      <h1>Spiel starten</h1>
-      <p class="muted">Erstelle ein neues Quiz und teile die PIN mit den Spielern.</p>
-      <button id="createBtn">Neues Spiel erstellen</button>
+      <h1 id="hostTitle">Spiel starten</h1>
+      <p class="muted" id="hostSub">Spiel mit dem ausgewählten Quiz erstellen.</p>
+      <button id="createBtn">Spiel erstellen</button>
+      <div class="spaced"><a class="btn secondary" href="/dashboard.html">Zurück zum Dashboard</a></div>
       <div id="createError" class="banner-bad small spaced" hidden></div>
     </div>
 
     <div id="lobbyCard" class="card center" hidden>
+      <h2 id="lobbyName"></h2>
+      <p class="muted" id="lobbyDesc"></p>
       <p class="muted">Game-PIN</p>
       <div class="pin" id="pinDisplay">------</div>
       <p class="muted small">Auf <strong id="joinUrl">/play.html</strong> öffnen oder PIN eingeben</p>
@@ -48,7 +51,7 @@
     <div id="endCard" class="card" hidden>
       <h2>🏆 Endstand</h2>
       <table id="finalBoard"></table>
-      <div class="spaced"><a class="btn" href="/host.html">Neues Spiel</a></div>
+      <div class="spaced"><a class="btn" href="/dashboard.html">Zurück zum Dashboard</a></div>
     </div>
 
     <div id="cancelBanner" class="banner-warn spaced" hidden></div>
@@ -57,8 +60,11 @@
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
-    const socket = io();
-    let totalQuestions = 0;
+    const params = new URLSearchParams(location.search);
+    const quizId = params.get('quiz');
+    if (!quizId) location.href = '/dashboard.html';
+
+    const socket = io({ withCredentials: true });
     let currentTimer = null;
 
     function show(id) {
@@ -68,21 +74,22 @@
     }
 
     $('createBtn').onclick = () => {
-      socket.emit('host:create', {}, (resp) => {
+      socket.emit('host:create', { quizId }, (resp) => {
         if (resp && resp.error) {
           $('createError').textContent = resp.error;
           $('createError').hidden = false;
           return;
         }
-        totalQuestions = resp.totalQuestions;
         $('pinDisplay').textContent = resp.pin;
         $('joinUrl').textContent = location.origin + '/play.html';
-        $('totalQ').textContent = totalQuestions + ' Fragen';
+        $('totalQ').textContent = resp.totalQuestions + ' Fragen';
+        $('lobbyName').textContent = resp.quizName;
         show('lobbyCard');
       });
     };
 
     socket.on('lobby:update', (data) => {
+      if (data.quizDescription) $('lobbyDesc').textContent = data.quizDescription;
       const list = $('playerList');
       list.innerHTML = '';
       if (!data.players.length) {
@@ -130,7 +137,6 @@
       show('reviewCard');
       const correctCount = data.perPlayer.filter((p) => p.correct).length;
       $('reviewTitle').textContent = correctCount + ' von ' + data.perPlayer.length + ' richtig';
-
       const body = $('reviewBody');
       body.innerHTML = '';
       const counts = data.counts;
@@ -147,20 +153,15 @@
         bar.style.background = i === data.correctIndex ? 'var(--good)' : '#475569';
         bar.style.width = Math.round((c / max) * 100) + '%';
         bar.style.borderRadius = '5px';
-        row.appendChild(label);
-        row.appendChild(bar);
+        row.appendChild(label); row.appendChild(bar);
         body.appendChild(row);
       });
-
       renderBoard($('reviewBoard'), data.leaderboard);
-
       $('nextBtn').textContent = data.hasNext ? 'Nächste Frage' : 'Endstand zeigen';
     });
 
     $('nextBtn').onclick = () => {
-      socket.emit('host:next', {}, (resp) => {
-        if (resp && resp.error) alert(resp.error);
-      });
+      socket.emit('host:next', {}, (resp) => { if (resp && resp.error) alert(resp.error); });
     };
 
     socket.on('game:end', (data) => {
@@ -202,9 +203,7 @@
     }
 
     function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
   </script>
 </body>

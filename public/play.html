@@ -21,6 +21,7 @@
     <div id="lobbyCard" class="card center" hidden>
       <h2>Bereit! 🎉</h2>
       <p class="muted">Hallo <strong id="meName"></strong></p>
+      <p class="muted small" id="lobbyQuiz"></p>
       <p class="muted small">Warte bis der Host das Spiel startet ...</p>
       <h3 class="spaced">Mitspieler</h3>
       <div id="playerList"></div>
@@ -90,6 +91,7 @@
     }
 
     socket.on('lobby:update', (data) => {
+      if (data.quizName) $('lobbyQuiz').textContent = 'Quiz: ' + data.quizName;
       const list = $('playerList');
       list.innerHTML = '';
       data.players.forEach((p) => {

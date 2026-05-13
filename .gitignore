@@ -3,3 +3,6 @@ npm-debug.log
 .DS_Store
 .env
 *.log
+data/users.json
+data/quizzes.json
+data/credentials.json
