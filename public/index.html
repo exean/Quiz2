@@ -4,26 +4,103 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Quiz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="/bg.js" defer></script>
 </head>
 <body>
   <div class="container">
-    <div class="card center">
-      <h1>Quiz</h1>
-      <p class="muted">Multiplayer-Quiz mit synchronisierten Fragen</p>
+    <div class="card center hero">
+      <span class="hero-eyebrow">Live · Mehrspieler · Synchronisiert</span>
+      <h1 class="hero-title gradient-text">Quiz</h1>
+      <p class="hero-sub">Stelle Fragen. Lade Freunde ein. Spielt synchron auf jedem Bildschirm.</p>
+      <div class="hero-cta">
+        <a class="btn" href="/play.html">Spiel beitreten</a>
+        <a class="btn secondary" href="/login.html">Quiz erstellen</a>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>Mitspielen</h2>
-      <p class="muted small">Du hast eine Game-PIN bekommen?</p>
-      <a class="btn" href="/play.html">Spiel beitreten</a>
-    </div>
-
-    <div class="card">
-      <h2>Quiz erstellen &amp; leiten</h2>
-      <p class="muted small">Mit Account einloggen, eigene Quizzes verwalten und Spiele starten.</p>
-      <a class="btn" href="/login.html">Login / Registrieren</a>
+    <div class="feature-grid">
+      <div class="card feature">
+        <div class="feature-icon">🎯</div>
+        <h2>Live-Multiplayer</h2>
+        <p class="muted small">Bis zu beliebig viele Spieler auf Smartphones, alle bekommen synchron dieselbe Frage.</p>
+      </div>
+      <div class="card feature">
+        <div class="feature-icon">📱</div>
+        <h2>QR-Code beitreten</h2>
+        <p class="muted small">Spieler scannen einen QR-Code und sind sofort dabei – keine App nötig.</p>
+      </div>
+      <div class="card feature">
+        <div class="feature-icon">🔐</div>
+        <h2>Passkey-Login</h2>
+        <p class="muted small">Einloggen per Fingerabdruck oder Face-ID. Eigene Quizzes bleiben privat.</p>
+      </div>
+      <div class="card feature">
+        <div class="feature-icon">⚡</div>
+        <h2>Schnelligkeit zählt</h2>
+        <p class="muted small">Wer richtig und schnell antwortet, bekommt mehr Punkte. Live-Leaderboard inklusive.</p>
+      </div>
     </div>
   </div>
+
+  <style>
+    .hero { padding: 3rem 1.5rem; }
+    .hero-eyebrow {
+      display: inline-block;
+      font-size: .75rem;
+      font-weight: 600;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      padding: .4rem .9rem;
+      border-radius: 999px;
+      background: rgba(168, 85, 247, .15);
+      border: 1px solid rgba(168, 85, 247, .35);
+      color: #d8b4fe;
+      margin-bottom: 1.25rem;
+    }
+    .hero-title {
+      font-size: clamp(3rem, 12vw, 5.5rem);
+      font-weight: 800;
+      line-height: 1;
+      margin: 0 0 1rem;
+      letter-spacing: -.04em;
+    }
+    .hero-sub {
+      color: var(--muted-strong);
+      font-size: clamp(1rem, 2.5vw, 1.15rem);
+      max-width: 28rem;
+      margin: 0 auto 1.75rem;
+    }
+    .hero-cta {
+      display: flex;
+      gap: .75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    @media (min-width: 600px) {
+      .feature-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .feature { margin-bottom: 0; }
+    .feature-icon {
+      font-size: 1.75rem;
+      width: 3rem; height: 3rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(34, 211, 238, .18), rgba(168, 85, 247, .18));
+      border: 1px solid var(--border);
+      margin-bottom: .75rem;
+    }
+    .feature h2 { font-size: 1.05rem; margin-bottom: .35rem; }
+  </style>
 </body>
 </html>

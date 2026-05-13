@@ -4,7 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Quiz · Host</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="/bg.js" defer></script>
 </head>
 <body>
   <div class="container">
@@ -155,16 +159,21 @@
       const max = Math.max(1, ...counts);
       counts.forEach((c, i) => {
         const row = document.createElement('div');
-        row.style.margin = '.4rem 0';
+        row.style.margin = '.55rem 0';
         const label = document.createElement('div');
         label.className = 'small';
-        label.innerHTML = '<strong>' + String.fromCharCode(65 + i) + '</strong> – ' + c + ' Stimme(n)' + (i === data.correctIndex ? ' ✅' : '');
+        label.style.marginBottom = '.3rem';
+        label.innerHTML = '<strong>' + String.fromCharCode(65 + i) + '</strong> · ' + c + ' Stimme(n)' + (i === data.correctIndex ? ' ✅' : '');
         if (i === data.correctIndex) label.style.color = 'var(--good)';
         const bar = document.createElement('div');
         bar.style.height = '10px';
-        bar.style.background = i === data.correctIndex ? 'var(--good)' : '#475569';
+        bar.style.borderRadius = '999px';
+        bar.style.transition = 'width .6s cubic-bezier(.22,1,.36,1)';
+        bar.style.background = i === data.correctIndex
+          ? 'linear-gradient(90deg, var(--good), #10b981)'
+          : 'linear-gradient(90deg, rgba(255,255,255,.18), rgba(255,255,255,.08))';
         bar.style.width = Math.round((c / max) * 100) + '%';
-        bar.style.borderRadius = '5px';
+        bar.style.boxShadow = i === data.correctIndex ? '0 0 12px rgba(52, 211, 153, .5)' : 'none';
         row.appendChild(label); row.appendChild(bar);
         body.appendChild(row);
       });
