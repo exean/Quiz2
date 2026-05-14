@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz · API</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/bg.js" defer></script>
+  <style>
+    .swagger-container {
+      background: rgba(255, 255, 255, .95);
+      color: #1a202c;
+      border-radius: var(--radius);
+      padding: 0;
+      margin: 0;
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+    }
+    .swagger-ui { background: transparent; color: inherit; }
+    .swagger-ui .topbar { display: none; }
+    .swagger-ui .info { margin: 20px 30px; }
+    .doc-hero {
+      padding: 1.5rem;
+    }
+    .doc-hero pre {
+      background: rgba(0, 0, 0, .35);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: .9rem 1rem;
+      overflow-x: auto;
+      font-size: .85rem;
+      margin: .5rem 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" style="max-width: 1100px">
+    <div class="card flex-between">
+      <div>
+        <h1>Quiz REST API</h1>
+        <p class="muted small">Vollständige Schnittstelle für programmatischen Zugriff</p>
+      </div>
+      <a class="btn secondary" href="/dashboard.html">Dashboard</a>
+    </div>
+
+    <div class="card doc-hero">
+      <h2>Schnellstart</h2>
+      <p class="muted small">Erzeuge einen API-Token im Dashboard (Sektion „API-Tokens") und schicke ihn als <code>Authorization: Bearer …</code>-Header mit. Alternative: nach einem <code>POST /api/auth/login</code> wird ein Session-Cookie gesetzt, das ebenfalls akzeptiert wird.</p>
+      <pre>curl -H "Authorization: Bearer qzt_..." \
+     https://deine-domain.tld/api/quizzes</pre>
+      <p class="small">
+        <a href="/api/openapi.json" target="_blank">OpenAPI 3.1 Spec als JSON</a> ·
+        <a href="/dashboard.html#tokens">Token erstellen</a>
+      </p>
+    </div>
+
+    <div class="card swagger-container">
+      <div id="swagger-ui"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" defer></script>
+  <script>
+    window.addEventListener('load', function () {
+      if (!window.SwaggerUIBundle) {
+        document.getElementById('swagger-ui').innerHTML =
+          '<div style="padding:2rem;color:#000">Swagger UI konnte nicht geladen werden. Spec liegt unter <a href="/api/openapi.json">/api/openapi.json</a>.</div>';
+        return;
+      }
+      window.SwaggerUIBundle({
+        url: '/api/openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        docExpansion: 'list',
+        defaultModelsExpandDepth: 0,
+        tryItOutEnabled: true,
+        persistAuthorization: true,
+      });
+    });
+  </script>
+</body>
+</html>

@@ -26,6 +26,8 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const QUIZZES_FILE = path.join(DATA_DIR, 'quizzes.json');
 const CREDS_FILE = path.join(DATA_DIR, 'credentials.json');
+const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
+const TOKEN_PREFIX = 'qzt_';
 const LOGO_MAX_DIM = 512;
 const LOGO_MAX_BYTES = 8 * 1024 * 1024;
 const QUIZ_THEMES = ['default', 'sunset', 'ocean', 'forest', 'candy', 'mono'];
@@ -130,13 +132,49 @@ function isSecure(req) {
   return req.secure || req.get('x-forwarded-proto') === 'https';
 }
 
+function loadTokens() { return load(TOKENS_FILE, []); }
+function saveTokens(t) { save(TOKENS_FILE, t); }
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function userByBearer(rawToken) {
+  if (!rawToken || !rawToken.startsWith(TOKEN_PREFIX)) return null;
+  const tokens = loadTokens();
+  const h = hashToken(rawToken);
+  const rec = tokens.find((t) => t.tokenHash === h);
+  if (!rec) return null;
+  const user = findUser((u) => u.id === rec.userId);
+  if (!user) return null;
+  // Update lastUsedAt at most once per minute to avoid hot-path file writes
+  const now = Date.now();
+  const last = rec.lastUsedAt ? new Date(rec.lastUsedAt).getTime() : 0;
+  if (now - last > 60 * 1000) {
+    rec.lastUsedAt = new Date(now).toISOString();
+    saveTokens(tokens);
+  }
+  return user;
+}
+
 function authMiddleware(req, res, next) {
+  const authHeader = req.get('authorization');
+  if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const user = userByBearer(token);
+    if (!user) return res.status(401).json({ error: 'Ungültiger API-Token' });
+    if (!user.verified) return res.status(403).json({ error: 'E-Mail noch nicht bestätigt' });
+    req.user = user;
+    req.authMethod = 'token';
+    return next();
+  }
   const session = getSession(req.cookies.sid);
   if (!session) return res.status(401).json({ error: 'Nicht eingeloggt' });
   const user = findUser((u) => u.id === session.userId);
   if (!user) return res.status(401).json({ error: 'Account nicht gefunden' });
   if (!user.verified) return res.status(403).json({ error: 'E-Mail noch nicht bestätigt' });
   req.user = user;
+  req.authMethod = 'session';
   next();
 }
 
@@ -467,6 +505,55 @@ app.post('/api/webauthn/login/verify', async (req, res) => {
   const sid = createSession(user.id);
   setCookie(res, 'sid', sid, { maxAge: SESSION_TTL_MS, secure: isSecure(req) });
   res.json({ ok: true, user: { id: user.id, email: user.email } });
+});
+
+/* ---------- API Tokens ---------- */
+
+app.get('/api/tokens', authMiddleware, (req, res) => {
+  const list = loadTokens()
+    .filter((t) => t.userId === req.user.id)
+    .map((t) => ({
+      id: t.id,
+      label: t.label,
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+    }));
+  res.json(list);
+});
+
+app.post('/api/tokens', authMiddleware, (req, res) => {
+  if (req.authMethod === 'token') {
+    return res.status(403).json({ error: 'Tokens können nur per Browser-Login erstellt werden' });
+  }
+  const label = String((req.body && req.body.label) || 'API-Token').trim().slice(0, 60) || 'API-Token';
+  const secret = crypto.randomBytes(24).toString('base64url');
+  const fullToken = TOKEN_PREFIX + secret;
+  const record = {
+    id: newId(),
+    userId: req.user.id,
+    label,
+    tokenHash: hashToken(fullToken),
+    createdAt: new Date().toISOString(),
+    lastUsedAt: null,
+  };
+  const tokens = loadTokens();
+  tokens.push(record);
+  saveTokens(tokens);
+  res.json({
+    id: record.id,
+    label: record.label,
+    createdAt: record.createdAt,
+    token: fullToken,
+  });
+});
+
+app.delete('/api/tokens/:id', authMiddleware, (req, res) => {
+  const tokens = loadTokens();
+  const idx = tokens.findIndex((t) => t.id === req.params.id && t.userId === req.user.id);
+  if (idx < 0) return res.status(404).json({ error: 'Token nicht gefunden' });
+  tokens.splice(idx, 1);
+  saveTokens(tokens);
+  res.json({ ok: true });
 });
 
 /* ---------- Quizzes ---------- */
@@ -923,6 +1010,33 @@ function buildQuestionPayload(body, base) {
   return out;
 }
 
+app.get('/api/quizzes/:id/questions', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  const view = viewQuestions(quiz, req.user.id);
+  res.json({
+    questions: view.questions,
+    ownCount: view.ownCount,
+    othersCount: view.othersCount,
+    totalCount: view.totalCount,
+  });
+});
+
+app.get('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  const view = viewQuestions(quiz, req.user.id);
+  const q = view.questions.find((x) => x.id === req.params.qid);
+  if (!q) return res.status(404).json({ error: 'Frage nicht gefunden' });
+  res.json(q);
+});
+
+app.get('/api/quizzes/:id/members', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  res.json(memberView(quiz));
+});
+
 app.post('/api/quizzes/:id/questions', authMiddleware, (req, res) => {
   const { quiz, list, error, status } = getQuizForAccess(req);
   if (error) return res.status(status).json({ error });
@@ -1082,6 +1196,384 @@ app.post('/api/quizzes/:id/import', authMiddleware, (req, res) => {
     skipped: result.skipped,
     invalid: result.invalid,
   });
+});
+
+/* ---------- OpenAPI spec & documentation ---------- */
+
+function buildOpenApiSpec(req) {
+  const serverUrl = baseUrl(req) + '/api';
+  const errorRef = { $ref: '#/components/schemas/Error' };
+  const errorResp = (description) => ({
+    description,
+    content: { 'application/json': { schema: errorRef } },
+  });
+  const okJson = (schemaName, description) => ({
+    description: description || 'OK',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/' + schemaName } } },
+  });
+  const okInline = (schema, description) => ({
+    description: description || 'OK',
+    content: { 'application/json': { schema } },
+  });
+  const security = [{ bearerToken: [] }, { sessionCookie: [] }];
+
+  return {
+    openapi: '3.1.0',
+    info: {
+      title: 'Quiz API',
+      version: '1.0.0',
+      description:
+        'REST API für das Multiplayer-Quiz. Authentifizierung wahlweise per Bearer-Token (für Skripte) oder Session-Cookie nach Login (für Browser).',
+    },
+    servers: [{ url: serverUrl }],
+    tags: [
+      { name: 'auth', description: 'Registrieren, Login, Logout, eigener Account' },
+      { name: 'tokens', description: 'API-Tokens für programmatischen Zugriff' },
+      { name: 'quizzes', description: 'Quizzes anlegen, lesen, ändern, löschen' },
+      { name: 'questions', description: 'Fragen eines Quiz verwalten' },
+      { name: 'members', description: 'Mitwirkende verwalten' },
+      { name: 'branding', description: 'Logo hoch- und runterladen' },
+      { name: 'transfer', description: 'JSON-Export und -Import' },
+    ],
+    components: {
+      securitySchemes: {
+        bearerToken: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'qzt_token',
+          description: 'API-Token mit Präfix qzt_, im Dashboard erstellbar.',
+        },
+        sessionCookie: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'sid',
+          description: 'Wird nach erfolgreichem /auth/login automatisch gesetzt.',
+        },
+      },
+      schemas: {
+        Error: {
+          type: 'object',
+          required: ['error'],
+          properties: { error: { type: 'string' }, code: { type: 'string' } },
+        },
+        User: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            email: { type: 'string', format: 'email' },
+            passkeys: { type: 'integer' },
+          },
+        },
+        Token: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            label: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' },
+            lastUsedAt: { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
+        TokenCreated: {
+          allOf: [
+            { $ref: '#/components/schemas/Token' },
+            {
+              type: 'object',
+              required: ['token'],
+              properties: {
+                token: { type: 'string', description: 'Der vollständige Token (qzt_...). Nur einmalig sichtbar.' },
+              },
+            },
+          ],
+        },
+        QuestionMultipleChoice: {
+          type: 'object',
+          required: ['type', 'text', 'answers', 'correctIndex', 'timeLimit'],
+          properties: {
+            id: { type: 'string', readOnly: true },
+            authorId: { type: 'string', readOnly: true },
+            type: { type: 'string', enum: ['multiple-choice'] },
+            text: { type: 'string' },
+            answers: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 6 },
+            correctIndex: { type: 'integer', minimum: 0 },
+            timeLimit: { type: 'integer', minimum: 5, maximum: 120 },
+          },
+        },
+        QuestionText: {
+          type: 'object',
+          required: ['type', 'text', 'acceptedAnswers', 'timeLimit'],
+          properties: {
+            id: { type: 'string', readOnly: true },
+            authorId: { type: 'string', readOnly: true },
+            type: { type: 'string', enum: ['text'] },
+            text: { type: 'string' },
+            acceptedAnswers: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20 },
+            timeLimit: { type: 'integer', minimum: 5, maximum: 120 },
+          },
+        },
+        Question: {
+          oneOf: [
+            { $ref: '#/components/schemas/QuestionMultipleChoice' },
+            { $ref: '#/components/schemas/QuestionText' },
+          ],
+          discriminator: { propertyName: 'type' },
+        },
+        Member: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            email: { type: 'string', format: 'email' },
+          },
+        },
+        MembersView: {
+          type: 'object',
+          properties: {
+            ownerId: { type: 'string' },
+            ownerEmail: { type: 'string', format: 'email' },
+            members: { type: 'array', items: { $ref: '#/components/schemas/Member' } },
+            pendingEmails: { type: 'array', items: { type: 'string', format: 'email' } },
+          },
+        },
+        QuizSummary: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            role: { type: 'string', enum: ['owner', 'member'] },
+            mode: { type: 'string', enum: ['open', 'questions-visible', 'count-only'] },
+            hostMode: { type: 'string', enum: ['owner', 'members'] },
+            theme: { type: 'string' },
+            logo: { type: 'string', nullable: true },
+            canHost: { type: 'boolean' },
+            totalQuestions: { type: 'integer' },
+            ownQuestions: { type: 'integer' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        Quiz: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            mode: { type: 'string', enum: ['open', 'questions-visible', 'count-only'] },
+            hostMode: { type: 'string', enum: ['owner', 'members'] },
+            theme: { type: 'string' },
+            logo: { type: 'string', nullable: true },
+            role: { type: 'string', enum: ['owner', 'member'] },
+            canHost: { type: 'boolean' },
+            isOwner: { type: 'boolean' },
+            members: { $ref: '#/components/schemas/MembersView' },
+            questions: { type: 'array', items: { $ref: '#/components/schemas/Question' } },
+            ownCount: { type: 'integer' },
+            othersCount: { type: 'integer' },
+            totalCount: { type: 'integer' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ImportResult: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            quizId: { type: 'string' },
+            imported: { type: 'integer' },
+            skipped: { type: 'integer' },
+            invalid: { type: 'integer' },
+          },
+        },
+        QuizExport: {
+          type: 'object',
+          required: ['name', 'questions'],
+          properties: {
+            formatVersion: { type: 'integer' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            mode: { type: 'string' },
+            hostMode: { type: 'string' },
+            theme: { type: 'string' },
+            questions: { type: 'array', items: { $ref: '#/components/schemas/Question' } },
+          },
+        },
+      },
+    },
+    security,
+    paths: {
+      '/auth/register': {
+        post: {
+          tags: ['auth'], summary: 'Account anlegen', security: [],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: {
+              type: 'object', required: ['email', 'password'],
+              properties: { email: { type: 'string', format: 'email' }, password: { type: 'string', minLength: 8 } },
+            } } },
+          },
+          responses: {
+            '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' }, message: { type: 'string' } } }, 'Registriert'),
+            '400': errorResp('Eingabe ungültig'),
+            '409': errorResp('E-Mail bereits registriert'),
+          },
+        },
+      },
+      '/auth/login': {
+        post: {
+          tags: ['auth'], summary: 'Login mit E-Mail und Passwort', security: [],
+          requestBody: { required: true, content: { 'application/json': { schema: {
+            type: 'object', required: ['email', 'password'],
+            properties: { email: { type: 'string', format: 'email' }, password: { type: 'string' } },
+          } } } },
+          responses: {
+            '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' }, user: { $ref: '#/components/schemas/User' } } }, 'Eingeloggt; Session-Cookie wird gesetzt'),
+            '401': errorResp('Falsche Anmeldedaten'),
+            '403': errorResp('E-Mail noch nicht bestätigt'),
+          },
+        },
+      },
+      '/auth/logout': {
+        post: {
+          tags: ['auth'], summary: 'Session beenden',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }) },
+        },
+      },
+      '/auth/me': {
+        get: {
+          tags: ['auth'], summary: 'Eigene Account-Info',
+          responses: { '200': okInline({ type: 'object', properties: { user: { oneOf: [{ $ref: '#/components/schemas/User' }, { type: 'null' }] } } }) },
+        },
+      },
+      '/auth/resend': {
+        post: {
+          tags: ['auth'], summary: 'Bestätigungslink erneut senden', security: [],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { email: { type: 'string', format: 'email' } } } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }) },
+        },
+      },
+      '/tokens': {
+        get: {
+          tags: ['tokens'], summary: 'Eigene API-Tokens auflisten',
+          responses: { '200': okInline({ type: 'array', items: { $ref: '#/components/schemas/Token' } }), '401': errorResp('Nicht eingeloggt') },
+        },
+        post: {
+          tags: ['tokens'], summary: 'Neuen API-Token erzeugen (nur per Browser-Login)',
+          requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { label: { type: 'string', maxLength: 60 } } } } } },
+          responses: { '200': okJson('TokenCreated', 'Token erstellt – Wert ist nur einmalig sichtbar'), '403': errorResp('Token-Auth nicht erlaubt zur Token-Erzeugung') },
+        },
+      },
+      '/tokens/{id}': {
+        delete: {
+          tags: ['tokens'], summary: 'Token widerrufen',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '404': errorResp('Token nicht gefunden') },
+        },
+      },
+      '/quizzes': {
+        get: {
+          tags: ['quizzes'], summary: 'Eigene + mitwirkende Quizzes auflisten',
+          responses: { '200': okInline({ type: 'array', items: { $ref: '#/components/schemas/QuizSummary' } }) },
+        },
+        post: {
+          tags: ['quizzes'], summary: 'Neues Quiz anlegen',
+          requestBody: { required: true, content: { 'application/json': { schema: {
+            type: 'object', required: ['name'],
+            properties: { name: { type: 'string', maxLength: 80 }, description: { type: 'string', maxLength: 500 } },
+          } } } },
+          responses: { '200': okJson('QuizSummary', 'Quiz erstellt'), '400': errorResp('Name fehlt') },
+        },
+      },
+      '/quizzes/{id}': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        get: { tags: ['quizzes'], summary: 'Quiz-Detail (mit Mode-/Rollen-abhängiger Sichtbarkeit)',
+          responses: { '200': okJson('Quiz'), '404': errorResp('Nicht gefunden') } },
+        patch: {
+          tags: ['quizzes'], summary: 'Stammdaten/Settings ändern (Owner)',
+          requestBody: { content: { 'application/json': { schema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' }, description: { type: 'string' },
+              mode: { type: 'string', enum: ['open', 'questions-visible', 'count-only'] },
+              hostMode: { type: 'string', enum: ['owner', 'members'] },
+              theme: { type: 'string' },
+            },
+          } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '403': errorResp('Nur Ersteller') },
+        },
+        delete: { tags: ['quizzes'], summary: 'Quiz löschen (Owner)',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '404': errorResp('Nicht gefunden') } },
+      },
+      '/quizzes/{id}/questions': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        get: { tags: ['questions'], summary: 'Fragenliste mit Sichtbarkeitsfilter',
+          responses: { '200': okInline({ type: 'object', properties: {
+            questions: { type: 'array', items: { $ref: '#/components/schemas/Question' } },
+            ownCount: { type: 'integer' }, othersCount: { type: 'integer' }, totalCount: { type: 'integer' },
+          } }) } },
+        post: { tags: ['questions'], summary: 'Frage hinzufügen',
+          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/Question' } } } },
+          responses: { '200': okJson('Question'), '400': errorResp('Validierung fehlgeschlagen'), '403': errorResp('Keine Berechtigung') } },
+      },
+      '/quizzes/{id}/questions/{qid}': {
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'qid', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        get: { tags: ['questions'], summary: 'Einzelne Frage abrufen',
+          responses: { '200': okJson('Question'), '404': errorResp('Nicht gefunden') } },
+        patch: { tags: ['questions'], summary: 'Frage ändern',
+          requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/Question' } } } },
+          responses: { '200': okJson('Question'), '403': errorResp('Keine Berechtigung'), '404': errorResp('Nicht gefunden') } },
+        delete: { tags: ['questions'], summary: 'Frage löschen',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '403': errorResp('Keine Berechtigung'), '404': errorResp('Nicht gefunden') } },
+      },
+      '/quizzes/{id}/members': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        get: { tags: ['members'], summary: 'Ersteller + Mitwirkende + offene Einladungen',
+          responses: { '200': okJson('MembersView') } },
+        post: { tags: ['members'], summary: 'Mitwirkende per E-Mail einladen (Owner)',
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['email'], properties: { email: { type: 'string', format: 'email' } } } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' }, pending: { type: 'boolean' }, members: { $ref: '#/components/schemas/MembersView' } } }), '409': errorResp('Bereits Mitwirkender') } },
+      },
+      '/quizzes/{id}/members/{key}': {
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'key', in: 'path', required: true, description: 'User-ID oder E-Mail-Adresse einer offenen Einladung', schema: { type: 'string' } },
+        ],
+        delete: { tags: ['members'], summary: 'Mitwirkenden entfernen oder selbst verlassen',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '403': errorResp('Nicht erlaubt') } },
+      },
+      '/quizzes/{id}/logo': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        post: { tags: ['branding'], summary: 'Logo hochladen (multipart, Feld "logo")',
+          requestBody: { required: true, content: { 'multipart/form-data': { schema: {
+            type: 'object', required: ['logo'], properties: { logo: { type: 'string', format: 'binary' } },
+          } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' }, logo: { type: 'string' } } }), '400': errorResp('Kein Bild'), '413': errorResp('Datei zu groß (max 8 MB)') } },
+        delete: { tags: ['branding'], summary: 'Logo entfernen',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }) } },
+      },
+      '/quizzes/{id}/export': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        get: { tags: ['transfer'], summary: 'Quiz als JSON herunterladen (Owner)',
+          responses: { '200': okJson('QuizExport', 'JSON-Datei mit Content-Disposition'), '403': errorResp('Nur Ersteller') } },
+      },
+      '/quizzes/import': {
+        post: { tags: ['transfer'], summary: 'Neues Quiz aus JSON anlegen',
+          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/QuizExport' } } } },
+          responses: { '200': okJson('ImportResult'), '400': errorResp('Ungültige Datei') } },
+      },
+      '/quizzes/{id}/import': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        post: { tags: ['transfer'], summary: 'Fragen in bestehendes Quiz importieren (Owner). Settings unverändert, Duplikate übersprungen.',
+          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/QuizExport' } } } },
+          responses: { '200': okJson('ImportResult'), '400': errorResp('Ungültige Datei'), '403': errorResp('Nur Ersteller') } },
+      },
+    },
+  };
+}
+
+app.get('/api/openapi.json', (req, res) => {
+  res.json(buildOpenApiSpec(req));
 });
 
 /* ---------- Socket.IO: Game ---------- */

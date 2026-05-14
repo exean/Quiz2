@@ -47,6 +47,19 @@
       <div class="spaced"><button id="addPasskeyBtn">Passkey hinzufügen</button></div>
       <div id="passkeyMsg" class="small spaced"></div>
     </div>
+
+    <div class="card" id="tokens">
+      <h2>🔌 API-Tokens</h2>
+      <p class="muted small">Für programmatischen Zugriff (Skripte, CLI). Schick den Token als <code>Authorization: Bearer …</code>-Header mit.</p>
+      <p class="muted small"><a href="/api.html">→ API-Dokumentation öffnen</a></p>
+      <div id="tokenList"></div>
+      <div class="row spaced">
+        <input id="tokenLabel" type="text" maxlength="60" placeholder="Beschreibung (z. B. „Backup-Script")" />
+        <button id="addTokenBtn" type="button" style="flex:0 0 auto">Token erstellen</button>
+      </div>
+      <div id="tokenReveal" class="banner-good small spaced" hidden></div>
+      <div id="tokenMsg" class="small spaced"></div>
+    </div>
   </div>
 
   <script src="/webauthn.js"></script>
@@ -231,7 +244,64 @@
       }
     };
 
-    loadMe().then(() => { loadQuizzes(); loadPasskeys(); });
+    async function loadTokens() {
+      const list = await api('/api/tokens');
+      const target = $('tokenList');
+      target.innerHTML = '';
+      if (!list.length) {
+        target.innerHTML = '<p class="muted small">Noch keine API-Tokens.</p>';
+        return;
+      }
+      list.forEach((t) => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        const info = document.createElement('div');
+        info.className = 'list-item-info';
+        const last = t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleDateString() : 'noch nie';
+        info.innerHTML =
+          '<strong>' + escapeHtml(t.label) + '</strong>' +
+          '<div class="muted small">erstellt ' + new Date(t.createdAt).toLocaleDateString() +
+          ' · zuletzt verwendet: ' + last + '</div>';
+        const actions = document.createElement('div');
+        actions.className = 'list-item-actions';
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = 'Widerrufen';
+        del.onclick = async () => {
+          if (!confirm('Token wirklich widerrufen? Skripte die ihn nutzen verlieren den Zugriff.')) return;
+          await api('/api/tokens/' + encodeURIComponent(t.id), { method: 'DELETE' });
+          loadTokens();
+        };
+        actions.appendChild(del);
+        div.appendChild(info);
+        div.appendChild(actions);
+        target.appendChild(div);
+      });
+    }
+
+    $('addTokenBtn').onclick = async () => {
+      const label = $('tokenLabel').value.trim();
+      const msg = $('tokenMsg');
+      const reveal = $('tokenReveal');
+      msg.textContent = '';
+      reveal.hidden = true;
+      try {
+        const data = await api('/api/tokens', { method: 'POST', body: JSON.stringify({ label }) });
+        $('tokenLabel').value = '';
+        reveal.innerHTML =
+          '<div><strong>Token erstellt – jetzt kopieren!</strong></div>' +
+          '<div class="small" style="margin:.4rem 0">Er wird nur einmal angezeigt.</div>' +
+          '<code style="display:block;padding:.5rem .7rem;background:rgba(0,0,0,.35);border-radius:8px;word-break:break-all;color:#fff">' +
+          escapeHtml(data.token) + '</code>';
+        reveal.hidden = false;
+        loadTokens();
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    };
+
+    loadMe().then(() => { loadQuizzes(); loadPasskeys(); loadTokens(); });
   </script>
 </body>
 </html>
