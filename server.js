@@ -39,7 +39,7 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const RP_NAME = process.env.RP_NAME || 'Quiz';
 
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser);
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -968,6 +968,120 @@ app.delete('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
   quiz.updatedAt = new Date().toISOString();
   saveQuizzes(list);
   res.json({ ok: true });
+});
+
+/* import / export */
+
+function exportQuiz(quiz) {
+  return {
+    formatVersion: 1,
+    name: quiz.name,
+    description: quiz.description,
+    mode: quiz.mode,
+    hostMode: quiz.hostMode,
+    theme: quiz.theme,
+    questions: (quiz.questions || []).map((q) => {
+      if (q.type === 'text') {
+        return {
+          type: 'text',
+          text: q.text,
+          acceptedAnswers: (q.acceptedAnswers || []).slice(),
+          timeLimit: q.timeLimit,
+        };
+      }
+      return {
+        type: 'multiple-choice',
+        text: q.text,
+        answers: (q.answers || []).slice(),
+        correctIndex: q.correctIndex,
+        timeLimit: q.timeLimit,
+      };
+    }),
+  };
+}
+
+function importQuestionsInto(quiz, rawQuestions, userId) {
+  if (!Array.isArray(rawQuestions)) return { error: 'questions fehlt oder ist kein Array' };
+  if (rawQuestions.length > 500) return { error: 'Zu viele Fragen (max 500)' };
+  quiz.questions = quiz.questions || [];
+  const existingTexts = new Set(
+    quiz.questions.map((q) => String(q.text || '').trim().toLowerCase())
+  );
+  let imported = 0, skipped = 0, invalid = 0;
+  for (const raw of rawQuestions) {
+    const candidate = buildQuestionPayload(raw || {}, null);
+    const err = validateQuestion(candidate);
+    if (err) { invalid++; continue; }
+    const key = candidate.text.trim().toLowerCase();
+    if (existingTexts.has(key)) { skipped++; continue; }
+    existingTexts.add(key);
+    quiz.questions.push({ id: newId(), authorId: userId, ...candidate });
+    imported++;
+  }
+  return { imported, skipped, invalid };
+}
+
+app.get('/api/quizzes/:id/export', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  const data = exportQuiz(quiz);
+  const safe = (quiz.name || 'quiz').replace(/[^a-z0-9_\-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60).toLowerCase() || 'quiz';
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + safe + '.json"');
+  res.send(JSON.stringify(data, null, 2));
+});
+
+app.post('/api/quizzes/import', authMiddleware, (req, res) => {
+  const data = req.body;
+  if (!data || typeof data !== 'object') return res.status(400).json({ error: 'Ungültiges JSON' });
+  const name = String(data.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Quiz-Name fehlt in der Datei' });
+  const quiz = {
+    id: newId(),
+    userId: req.user.id,
+    name: name.slice(0, 80),
+    description: String(data.description || '').trim().slice(0, 500),
+    mode: QUIZ_MODES.includes(data.mode) ? data.mode : 'open',
+    hostMode: HOST_MODES.includes(data.hostMode) ? data.hostMode : 'owner',
+    theme: QUIZ_THEMES.includes(data.theme) ? data.theme : 'default',
+    logo: null,
+    memberIds: [],
+    pendingEmails: [],
+    questions: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const result = importQuestionsInto(quiz, data.questions || [], req.user.id);
+  if (result.error) return res.status(400).json({ error: result.error });
+  const list = load(QUIZZES_FILE, []);
+  list.push(quiz);
+  saveQuizzes(list);
+  res.json({
+    ok: true,
+    quizId: quiz.id,
+    imported: result.imported,
+    skipped: result.skipped,
+    invalid: result.invalid,
+  });
+});
+
+app.post('/api/quizzes/:id/import', authMiddleware, (req, res) => {
+  const { quiz, list, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  const data = req.body;
+  if (!data || typeof data !== 'object') return res.status(400).json({ error: 'Ungültiges JSON' });
+  const result = importQuestionsInto(quiz, data.questions || [], req.user.id);
+  if (result.error) return res.status(400).json({ error: result.error });
+  if (result.imported > 0) {
+    quiz.updatedAt = new Date().toISOString();
+    saveQuizzes(list);
+  }
+  res.json({
+    ok: true,
+    imported: result.imported,
+    skipped: result.skipped,
+    invalid: result.invalid,
+  });
 });
 
 /* ---------- Socket.IO: Game ---------- */

@@ -26,7 +26,12 @@
       <input id="newName" type="text" maxlength="80" placeholder="z.B. Geografie-Quiz" />
       <label for="newDesc">Beschreibung</label>
       <input id="newDesc" type="text" maxlength="500" placeholder="Kurze Beschreibung (optional)" />
-      <div class="spaced"><button id="createBtn">Quiz anlegen</button></div>
+      <div class="row spaced">
+        <button id="createBtn">Quiz anlegen</button>
+        <label for="importInput" class="btn secondary" style="cursor:pointer">⬆ Aus Datei importieren
+          <input id="importInput" type="file" accept=".json,application/json" style="display:none" />
+        </label>
+      </div>
       <div id="createMsg" class="small spaced"></div>
     </div>
 
@@ -161,6 +166,28 @@
         target.appendChild(div);
       });
     }
+
+    $('importInput').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      const msg = $('createMsg');
+      msg.textContent = '';
+      try {
+        const text = await file.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch (parseErr) { throw new Error('Datei ist kein gültiges JSON'); }
+        const resp = await api('/api/quizzes/import', { method: 'POST', body: JSON.stringify(data) });
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Quiz importiert (' + resp.imported + ' Fragen' +
+          (resp.invalid ? ', ' + resp.invalid + ' ungültig übersprungen' : '') + '). Weiter zum Editor ...';
+        setTimeout(() => { location.href = '/quiz-edit.html?id=' + encodeURIComponent(resp.quizId); }, 600);
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
+      }
+    });
 
     $('createBtn').onclick = async () => {
       const name = $('newName').value.trim();

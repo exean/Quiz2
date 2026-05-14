@@ -177,7 +177,16 @@
     </div>
 
     <div class="card">
-      <h2>Fragen</h2>
+      <div class="flex-between" style="margin-bottom:.5rem">
+        <h2 style="margin:0">Fragen</h2>
+        <div class="row" id="ioActions" style="flex:0 0 auto;gap:.4rem" hidden>
+          <a id="exportBtn" class="btn secondary" href="#" style="padding:.55rem .9rem;font-size:.85rem">⬇ Export</a>
+          <label for="qImportInput" class="btn secondary" style="padding:.55rem .9rem;font-size:.85rem;cursor:pointer">⬆ Import
+            <input id="qImportInput" type="file" accept=".json,application/json" style="display:none" />
+          </label>
+        </div>
+      </div>
+      <div id="ioMsg" class="small" hidden style="margin-bottom:.6rem"></div>
       <div id="othersHint" class="banner-warn small" hidden style="margin-bottom:.75rem"></div>
       <div id="questionList"></div>
     </div>
@@ -455,6 +464,12 @@
         $('testBtn').hidden = false;
       } else {
         $('testBtn').hidden = true;
+      }
+
+      // Export/Import toolbar (owner only)
+      $('ioActions').hidden = !quiz.isOwner;
+      if (quiz.isOwner) {
+        $('exportBtn').href = '/api/quizzes/' + encodeURIComponent(quizId) + '/export';
       }
 
       // Owner-only sections
@@ -855,6 +870,34 @@
         msg.textContent = err.message;
       }
     };
+
+    $('qImportInput').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      const msg = $('ioMsg');
+      msg.hidden = false;
+      msg.textContent = '';
+      try {
+        const text = await file.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch (parseErr) { throw new Error('Datei ist kein gültiges JSON'); }
+        const resp = await api('/api/quizzes/' + encodeURIComponent(quizId) + '/import', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        });
+        msg.className = 'banner-good small';
+        const bits = [resp.imported + ' importiert'];
+        if (resp.skipped) bits.push(resp.skipped + ' Duplikat(e) übersprungen');
+        if (resp.invalid) bits.push(resp.invalid + ' ungültig');
+        msg.textContent = bits.join(' · ');
+        load();
+      } catch (err) {
+        msg.className = 'banner-bad small';
+        msg.textContent = err.message;
+      }
+    });
 
     resetForm();
     load();
