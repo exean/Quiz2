@@ -27,6 +27,7 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const QUIZZES_FILE = path.join(DATA_DIR, 'quizzes.json');
 const CREDS_FILE = path.join(DATA_DIR, 'credentials.json');
 const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
+const RESULTS_FILE = path.join(DATA_DIR, 'results.json');
 const TOKEN_PREFIX = 'qzt_';
 const LOGO_MAX_DIM = 512;
 const LOGO_MAX_BYTES = 8 * 1024 * 1024;
@@ -885,6 +886,54 @@ app.delete('/api/quizzes/:id', authMiddleware, (req, res) => {
   if (removed.logo) {
     try { fs.unlinkSync(path.join(UPLOADS_DIR, removed.logo)); } catch (_) { /* ignore */ }
   }
+  // Drop any saved results for this quiz
+  const results = loadResults();
+  const filtered = results.filter((r) => r.quizId !== req.params.id);
+  if (filtered.length !== results.length) saveResultsList(filtered);
+  res.json({ ok: true });
+});
+
+/* results */
+
+function resultListEntry(r) {
+  return {
+    id: r.id,
+    startedAt: r.startedAt,
+    endedAt: r.endedAt,
+    totalQuestions: r.totalQuestions,
+    questionsPlayed: r.questionsPlayed,
+    playerCount: r.players.length,
+    hostEmail: r.hostEmail,
+    topPlayer: r.players[0] ? { name: r.players[0].name, score: r.players[0].score } : null,
+  };
+}
+
+app.get('/api/quizzes/:id/results', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  const list = loadResults()
+    .filter((r) => r.quizId === quiz.id)
+    .sort((a, b) => (b.endedAt || '').localeCompare(a.endedAt || ''))
+    .map(resultListEntry);
+  res.json(list);
+});
+
+app.get('/api/quizzes/:id/results/:rid', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  const round = loadResults().find((r) => r.id === req.params.rid && r.quizId === quiz.id);
+  if (!round) return res.status(404).json({ error: 'Ergebnis nicht gefunden' });
+  res.json(round);
+});
+
+app.delete('/api/quizzes/:id/results/:rid', authMiddleware, (req, res) => {
+  const { quiz, error, status } = getQuizForAccess(req, 'owner');
+  if (error) return res.status(status).json({ error });
+  const list = loadResults();
+  const idx = list.findIndex((r) => r.id === req.params.rid && r.quizId === quiz.id);
+  if (idx < 0) return res.status(404).json({ error: 'Ergebnis nicht gefunden' });
+  list.splice(idx, 1);
+  saveResultsList(list);
   res.json({ ok: true });
 });
 
@@ -1234,6 +1283,7 @@ function buildOpenApiSpec(req) {
       { name: 'members', description: 'Mitwirkende verwalten' },
       { name: 'branding', description: 'Logo hoch- und runterladen' },
       { name: 'transfer', description: 'JSON-Export und -Import' },
+      { name: 'results', description: 'Gespeicherte Ergebnisse vergangener Runden' },
     ],
     components: {
       securitySchemes: {
@@ -1381,6 +1431,76 @@ function buildOpenApiSpec(req) {
             imported: { type: 'integer' },
             skipped: { type: 'integer' },
             invalid: { type: 'integer' },
+          },
+        },
+        ResultSummary: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            startedAt: { type: 'string', format: 'date-time' },
+            endedAt: { type: 'string', format: 'date-time' },
+            totalQuestions: { type: 'integer' },
+            questionsPlayed: { type: 'integer' },
+            playerCount: { type: 'integer' },
+            hostEmail: { type: 'string', nullable: true },
+            topPlayer: {
+              type: 'object', nullable: true,
+              properties: { name: { type: 'string' }, score: { type: 'integer' } },
+            },
+          },
+        },
+        ResultDetail: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            quizId: { type: 'string' },
+            quizName: { type: 'string' },
+            hostEmail: { type: 'string', nullable: true },
+            startedAt: { type: 'string', format: 'date-time' },
+            endedAt: { type: 'string', format: 'date-time' },
+            totalQuestions: { type: 'integer' },
+            questionsPlayed: { type: 'integer' },
+            players: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  score: { type: 'integer' },
+                  correct: { type: 'integer' },
+                  answered: { type: 'integer' },
+                },
+              },
+            },
+            questions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  index: { type: 'integer' },
+                  type: { type: 'string', enum: ['multiple-choice', 'text'] },
+                  text: { type: 'string' },
+                  answers: { type: 'array', items: { type: 'string' }, nullable: true },
+                  correctIndex: { type: 'integer', nullable: true },
+                  acceptedAnswers: { type: 'array', items: { type: 'string' }, nullable: true },
+                  counts: { type: 'array', items: { type: 'integer' }, nullable: true },
+                  perPlayer: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string' },
+                        correct: { type: 'boolean' },
+                        gained: { type: 'integer' },
+                        choice: { type: 'integer', nullable: true },
+                        text: { type: 'string', nullable: true },
+                      },
+                    },
+                  },
+                  endedAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            },
           },
         },
         QuizExport: {
@@ -1568,6 +1688,21 @@ function buildOpenApiSpec(req) {
           requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/QuizExport' } } } },
           responses: { '200': okJson('ImportResult'), '400': errorResp('Ungültige Datei'), '403': errorResp('Nur Ersteller') } },
       },
+      '/quizzes/{id}/results': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        get: { tags: ['results'], summary: 'Liste der gespielten Runden (Owner)',
+          responses: { '200': okInline({ type: 'array', items: { $ref: '#/components/schemas/ResultSummary' } }), '403': errorResp('Nur Ersteller') } },
+      },
+      '/quizzes/{id}/results/{rid}': {
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'rid', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        get: { tags: ['results'], summary: 'Detailliertes Ergebnis einer Runde (Owner)',
+          responses: { '200': okJson('ResultDetail'), '404': errorResp('Nicht gefunden') } },
+        delete: { tags: ['results'], summary: 'Ergebnis löschen (Owner)',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '404': errorResp('Nicht gefunden') } },
+      },
     },
   };
 }
@@ -1662,6 +1797,25 @@ function endQuestion(game, reason) {
     }
   }
   game.state = 'review';
+  game.history.push({
+    index: game.currentIndex,
+    type: q.type,
+    text: q.text,
+    timeLimit: q.timeLimit,
+    answers: q.type === 'multiple-choice' ? q.answers.slice() : null,
+    correctIndex: q.type === 'multiple-choice' ? q.correctIndex : null,
+    acceptedAnswers: q.type === 'text' ? (q.acceptedAnswers || []).slice() : null,
+    counts: counts ? counts.slice() : null,
+    perPlayer: perPlayer.map((p) => ({
+      id: p.id,
+      name: p.name,
+      correct: p.correct,
+      gained: p.gained,
+      choice: p.choice,
+      text: p.text,
+    })),
+    endedAt: new Date().toISOString(),
+  });
   io.to(game.pin).emit('question:end', {
     reason,
     type: q.type,
@@ -1688,7 +1842,42 @@ function endQuestion(game, reason) {
 function finishGame(game) {
   game.state = 'finished';
   if (game.timer) { clearTimeout(game.timer); game.timer = null; }
+  saveRoundResult(game);
   io.to(game.pin).emit('game:end', { leaderboard: leaderboard(game) });
+}
+
+function loadResults() { return load(RESULTS_FILE, []); }
+function saveResultsList(list) { save(RESULTS_FILE, list); }
+
+function saveRoundResult(game) {
+  if (!game.startedAt || !game.history.length || !game.players.size) return;
+  const lookup = authorLookup();
+  const players = Array.from(game.players.values()).map((p) => {
+    let correct = 0, answered = 0;
+    for (const h of game.history) {
+      const me = h.perPlayer.find((x) => x.id === p.id);
+      if (!me) continue;
+      if (me.choice !== null || me.text !== null) answered += 1;
+      if (me.correct) correct += 1;
+    }
+    return { name: p.name, score: p.score, correct, answered };
+  }).sort((a, b) => b.score - a.score);
+  const round = {
+    id: newId(),
+    quizId: game.quizId,
+    quizName: game.quizName,
+    hostUserId: game.hostUserId,
+    hostEmail: lookup(game.hostUserId) || null,
+    startedAt: new Date(game.startedAt).toISOString(),
+    endedAt: new Date().toISOString(),
+    totalQuestions: game.questions.length,
+    questionsPlayed: game.history.length,
+    players,
+    questions: game.history,
+  };
+  const list = loadResults();
+  list.push(round);
+  saveResultsList(list);
 }
 
 function disposeGame(game) {
@@ -1728,6 +1917,7 @@ io.on('connection', (socket) => {
       hostSocketId: socket.id,
       hostUserId: socket.data.userId,
       players: new Map(),
+      quizId: quiz.id,
       quizName: quiz.name,
       quizDescription: quiz.description,
       theme: quiz.theme,
@@ -1738,6 +1928,8 @@ io.on('connection', (socket) => {
       answers: new Map(),
       timer: null,
       questionStart: 0,
+      startedAt: null,
+      history: [],
     };
     games.set(pin, game);
     socket.join(pin);
@@ -1793,6 +1985,7 @@ io.on('connection', (socket) => {
     if (!game || game.hostSocketId !== socket.id) return cb && cb({ error: 'Nur der Host darf starten' });
     if (game.players.size === 0) return cb && cb({ error: 'Mindestens ein Spieler nötig' });
     if (game.state !== 'lobby') return cb && cb({ error: 'Spiel läuft bereits' });
+    game.startedAt = Date.now();
     game.currentIndex = 0;
     startQuestion(game);
     cb && cb({ ok: true });

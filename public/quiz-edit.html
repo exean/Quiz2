@@ -19,6 +19,7 @@
       </div>
       <div class="row" style="flex:0 0 auto;gap:.4rem">
         <a class="btn" id="testBtn" href="#" hidden>▶ Testen</a>
+        <a class="btn secondary" id="resultsBtn" href="#" hidden>📊 Ergebnisse</a>
         <a class="btn secondary" href="/dashboard.html">Zurück</a>
       </div>
     </div>
@@ -464,6 +465,14 @@
         $('testBtn').hidden = false;
       } else {
         $('testBtn').hidden = true;
+      }
+
+      // Results button (owner only)
+      if (quiz.isOwner) {
+        $('resultsBtn').href = '/results.html?quiz=' + encodeURIComponent(quizId);
+        $('resultsBtn').hidden = false;
+      } else {
+        $('resultsBtn').hidden = true;
       }
 
       // Export/Import toolbar (owner only)

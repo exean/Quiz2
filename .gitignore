@@ -7,5 +7,6 @@ data/users.json
 data/quizzes.json
 data/credentials.json
 data/tokens.json
+data/results.json
 data/uploads/*
 !data/uploads/.gitkeep

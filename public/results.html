@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Quiz · Ergebnisse</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/bg.js" defer></script>
+</head>
+<body>
+  <div class="container">
+    <div class="card flex-between">
+      <div>
+        <h1 id="title">Ergebnisse</h1>
+        <p class="muted small" id="subtitle"></p>
+      </div>
+      <div class="row" style="flex:0 0 auto;gap:.4rem">
+        <a class="btn secondary" id="backBtn" href="#">Zurück</a>
+      </div>
+    </div>
+
+    <div class="card" id="loadingCard"><p class="muted">Lade ...</p></div>
+
+    <div class="card" id="errorCard" hidden></div>
+
+    <div id="listView" hidden>
+      <div class="card">
+        <h2>Gespielte Runden</h2>
+        <div id="resultList"></div>
+      </div>
+    </div>
+
+    <div id="detailView" hidden>
+      <div class="card">
+        <div class="flex-between">
+          <h2 id="roundTitle">Runde</h2>
+          <button id="deleteRoundBtn" class="danger" style="padding:.5rem .9rem;font-size:.85rem">Löschen</button>
+        </div>
+        <p class="muted small" id="roundMeta"></p>
+      </div>
+
+      <div class="card">
+        <h2>🏆 Endstand</h2>
+        <table id="finalBoard"></table>
+      </div>
+
+      <div class="card">
+        <h2>Fragen-Übersicht</h2>
+        <div id="questionsBreakdown"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const quizId = params.get('quiz');
+    const roundId = params.get('round');
+    if (!quizId) location.href = '/dashboard.html';
+    $('backBtn').href = roundId
+      ? '/results.html?quiz=' + encodeURIComponent(quizId)
+      : '/quiz-edit.html?id=' + encodeURIComponent(quizId);
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts, credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      });
+      if (res.status === 401) { location.href = '/login.html'; throw new Error('unauth'); }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function show(view) {
+      $('loadingCard').hidden = true;
+      $('listView').hidden = view !== 'list';
+      $('detailView').hidden = view !== 'detail';
+    }
+
+    function showError(msg) {
+      $('loadingCard').hidden = true;
+      $('errorCard').textContent = msg;
+      $('errorCard').className = 'card banner-bad';
+      $('errorCard').hidden = false;
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '–';
+      const d = new Date(iso);
+      return d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
+    }
+
+    function fmtDuration(startedAt, endedAt) {
+      const s = startedAt && new Date(startedAt).getTime();
+      const e = endedAt && new Date(endedAt).getTime();
+      if (!s || !e) return '';
+      const sec = Math.round((e - s) / 1000);
+      if (sec < 60) return sec + ' s';
+      const m = Math.floor(sec / 60);
+      const r = sec % 60;
+      return m + ' min' + (r ? ' ' + r + ' s' : '');
+    }
+
+    async function loadQuiz() {
+      try {
+        const quiz = await api('/api/quizzes/' + encodeURIComponent(quizId));
+        $('title').textContent = quiz.name + ' – Ergebnisse';
+        document.documentElement.dataset.theme = quiz.theme || 'default';
+        return quiz;
+      } catch (err) {
+        showError(err.message);
+        throw err;
+      }
+    }
+
+    async function loadList() {
+      try {
+        const list = await api('/api/quizzes/' + encodeURIComponent(quizId) + '/results');
+        const target = $('resultList');
+        target.innerHTML = '';
+        if (!list.length) {
+          target.innerHTML = '<p class="muted">Es wurden noch keine Runden gespielt.</p>';
+          show('list');
+          return;
+        }
+        $('subtitle').textContent = list.length + ' gespielte Runde' + (list.length === 1 ? '' : 'n');
+        list.forEach((r) => {
+          const div = document.createElement('div');
+          div.className = 'list-item';
+          const info = document.createElement('div');
+          info.className = 'list-item-info';
+          const date = fmtDate(r.endedAt || r.startedAt);
+          const duration = fmtDuration(r.startedAt, r.endedAt);
+          const top = r.topPlayer
+            ? '🏆 ' + escapeHtml(r.topPlayer.name) + ' · <strong>' + r.topPlayer.score + '</strong> P'
+            : 'keine Spieler';
+          info.innerHTML =
+            '<div><strong>' + escapeHtml(date) + '</strong>' +
+            (duration ? ' <span class="muted small">· ' + duration + '</span>' : '') + '</div>' +
+            '<div class="muted small">' + r.playerCount + ' Spieler · ' +
+            r.questionsPlayed + '/' + r.totalQuestions + ' Fragen</div>' +
+            '<div class="small spaced" style="margin-top:.3rem">' + top + '</div>';
+          const actions = document.createElement('div');
+          actions.className = 'list-item-actions';
+          const openBtn = document.createElement('a');
+          openBtn.className = 'btn';
+          openBtn.textContent = 'Ansehen';
+          openBtn.href = '/results.html?quiz=' + encodeURIComponent(quizId) + '&round=' + encodeURIComponent(r.id);
+          const delBtn = document.createElement('button');
+          delBtn.className = 'danger';
+          delBtn.textContent = 'Löschen';
+          delBtn.onclick = async () => {
+            if (!confirm('Ergebnis dieser Runde wirklich löschen?')) return;
+            await api('/api/quizzes/' + encodeURIComponent(quizId) + '/results/' + encodeURIComponent(r.id), { method: 'DELETE' });
+            loadList();
+          };
+          actions.appendChild(openBtn);
+          actions.appendChild(delBtn);
+          div.appendChild(info);
+          div.appendChild(actions);
+          target.appendChild(div);
+        });
+        show('list');
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    async function loadDetail() {
+      try {
+        const r = await api('/api/quizzes/' + encodeURIComponent(quizId) + '/results/' + encodeURIComponent(roundId));
+        $('roundTitle').textContent = 'Runde vom ' + fmtDate(r.startedAt || r.endedAt);
+        const duration = fmtDuration(r.startedAt, r.endedAt);
+        $('roundMeta').innerHTML =
+          (r.hostEmail ? 'Host: ' + escapeHtml(r.hostEmail) + ' · ' : '') +
+          r.players.length + ' Spieler · ' +
+          r.questionsPlayed + '/' + r.totalQuestions + ' Fragen' +
+          (duration ? ' · Dauer ' + duration : '');
+
+        // Final leaderboard
+        const tbl = $('finalBoard');
+        tbl.innerHTML = '<thead><tr><th>#</th><th>Spieler</th><th>Richtig</th><th class="score">Punkte</th></tr></thead>';
+        const tbody = document.createElement('tbody');
+        r.players.forEach((p, i) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<td class="rank">' + (i + 1) + '</td>' +
+            '<td>' + escapeHtml(p.name) + '</td>' +
+            '<td>' + p.correct + ' / ' + p.answered + '</td>' +
+            '<td class="score">' + p.score + '</td>';
+          tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody);
+
+        // Question breakdown
+        const target = $('questionsBreakdown');
+        target.innerHTML = '';
+        r.questions.forEach((q, i) => {
+          const card = document.createElement('div');
+          card.style.padding = '.9rem 0';
+          card.style.borderBottom = '1px solid var(--border)';
+          const isText = q.type === 'text';
+          const correctText = isText
+            ? '<div class="small spaced" style="margin-top:.4rem;color:var(--good)"><strong>Korrekt:</strong> ' +
+              (q.acceptedAnswers || []).map((a) => escapeHtml(a)).join(' / ') + '</div>'
+            : '<div class="small spaced" style="margin-top:.4rem;color:var(--good)"><strong>Korrekt:</strong> ' +
+              escapeHtml((q.answers || [])[q.correctIndex] || '') + '</div>';
+          card.innerHTML =
+            '<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:baseline">' +
+              '<strong>' + (i + 1) + '. ' + escapeHtml(q.text) + '</strong>' +
+              (isText ? ' <span class="badge badge-member">Freitext</span>' : '') +
+            '</div>' +
+            correctText;
+
+          if (q.perPlayer && q.perPlayer.length) {
+            const list = document.createElement('div');
+            list.style.marginTop = '.6rem';
+            q.perPlayer.forEach((p) => {
+              const row = document.createElement('div');
+              row.style.display = 'flex';
+              row.style.justifyContent = 'space-between';
+              row.style.gap = '.5rem';
+              row.style.padding = '.3rem 0';
+              row.style.borderTop = '1px solid var(--border)';
+              const ans = isText
+                ? (p.text ? '"' + escapeHtml(p.text) + '"' : '<em class="muted">keine</em>')
+                : (p.choice !== null && q.answers ? escapeHtml(q.answers[p.choice] || '?') : '<em class="muted">keine</em>');
+              row.innerHTML =
+                '<div><strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + ans + '</span></div>' +
+                '<div style="color:' + (p.correct ? 'var(--good)' : 'var(--bad)') + '">' +
+                (p.correct ? '✓ +' + p.gained : '✗') + '</div>';
+              list.appendChild(row);
+            });
+            card.appendChild(list);
+          }
+          target.appendChild(card);
+        });
+
+        show('detail');
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    $('deleteRoundBtn').onclick = async () => {
+      if (!roundId) return;
+      if (!confirm('Diese Runde wirklich löschen?')) return;
+      try {
+        await api('/api/quizzes/' + encodeURIComponent(quizId) + '/results/' + encodeURIComponent(roundId), { method: 'DELETE' });
+        location.href = '/results.html?quiz=' + encodeURIComponent(quizId);
+      } catch (err) { alert(err.message); }
+    };
+
+    (async () => {
+      await loadQuiz().catch(() => {});
+      if (roundId) await loadDetail();
+      else await loadList();
+    })();
+  </script>
+</body>
+</html>
