@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Quiz · Testen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/bg.js" defer></script>
+</head>
+<body>
+  <div class="container">
+    <div id="loadingCard" class="card center">
+      <p class="muted">Lade Quiz ...</p>
+    </div>
+
+    <div id="errorCard" class="card banner-bad" hidden></div>
+
+    <div id="introCard" class="card center" hidden>
+      <img id="logo" class="quiz-logo" alt="" hidden />
+      <span class="player-pill" style="margin-bottom:.75rem">🧪 Test-Modus</span>
+      <h1 id="quizName"></h1>
+      <p class="muted" id="quizDesc"></p>
+      <p class="muted small" id="qCount"></p>
+      <p class="muted small" style="margin-top:.75rem">Du spielst alle Fragen alleine durch. Nichts wird gespeichert.</p>
+      <div class="spaced"><button id="startBtn">Starten</button></div>
+      <div class="spaced"><a class="btn secondary" id="backBtn">Zurück zum Editor</a></div>
+    </div>
+
+    <div id="questionCard" class="card" hidden>
+      <div class="flex-between">
+        <span class="muted small" id="qIndex"></span>
+        <span class="muted small" id="qTimer"></span>
+      </div>
+      <h2 id="qText"></h2>
+      <div class="timer-bar"><div id="timerBar" style="width:100%"></div></div>
+      <div id="qAnswers" class="answer-grid"></div>
+    </div>
+
+    <div id="reviewCard" class="card center" hidden>
+      <div id="resultBanner"></div>
+      <p class="muted spaced">Punkte gesamt</p>
+      <div class="pin" id="myScore">0</div>
+      <div class="spaced"><button id="nextBtn">Weiter</button></div>
+    </div>
+
+    <div id="endCard" class="card center" hidden>
+      <h2>🏁 Test beendet</h2>
+      <p class="muted">Du hast <strong id="endCorrect"></strong> von <strong id="endTotal"></strong> Fragen richtig.</p>
+      <p class="muted small">Gesamtpunkte</p>
+      <div class="pin" id="endScore">0</div>
+      <div class="row spaced">
+        <button id="restartBtn">Nochmal testen</button>
+        <a class="btn secondary" id="endBackBtn">Zurück zum Editor</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    const quizId = params.get('quiz');
+    if (!quizId) location.href = '/dashboard.html';
+
+    const backUrl = '/quiz-edit.html?id=' + encodeURIComponent(quizId);
+    $('backBtn').href = backUrl;
+    $('endBackBtn').href = backUrl;
+
+    const TEXT_TIME_MULTIPLIER = 3;
+    const TEXT_LEVENSHTEIN_MAX = 2;
+    const POINTS_BASE = 1000;
+
+    let quiz = null;
+    let order = [];
+    let idx = 0;
+    let score = 0;
+    let correctCount = 0;
+    let questionStart = 0;
+    let answered = false;
+    let timerHandle = null;
+    let deadline = 0;
+
+    function show(id) {
+      ['loadingCard', 'errorCard', 'introCard', 'questionCard', 'reviewCard', 'endCard'].forEach((x) => {
+        $(x).hidden = (x !== id);
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function levenshtein(a, b) {
+      if (a === b) return 0;
+      const m = a.length, n = b.length;
+      if (!m) return n;
+      if (!n) return m;
+      let prev = new Array(n + 1);
+      let curr = new Array(n + 1);
+      for (let j = 0; j <= n; j++) prev[j] = j;
+      for (let i = 1; i <= m; i++) {
+        curr[0] = i;
+        const ai = a.charCodeAt(i - 1);
+        for (let j = 1; j <= n; j++) {
+          const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+          curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+        }
+        [prev, curr] = [curr, prev];
+      }
+      return prev[n];
+    }
+
+    function isTextAnswerCorrect(input, accepted) {
+      const inp = String(input || '').trim().toLowerCase();
+      if (!inp) return false;
+      return (accepted || []).some((a) => {
+        const norm = String(a).trim().toLowerCase();
+        return norm && levenshtein(inp, norm) <= TEXT_LEVENSHTEIN_MAX;
+      });
+    }
+
+    function effectiveTimeLimit(q) {
+      return q.type === 'text' ? q.timeLimit * TEXT_TIME_MULTIPLIER : q.timeLimit;
+    }
+
+    function shuffle(arr) {
+      const copy = arr.slice();
+      for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    }
+
+    function applyBrand() {
+      document.documentElement.dataset.theme = quiz.theme || 'default';
+      if (quiz.logo) {
+        $('logo').src = quiz.logo;
+        $('logo').hidden = false;
+      }
+    }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/quizzes/' + encodeURIComponent(quizId), { credentials: 'include' });
+        if (res.status === 401) { location.href = '/login.html'; return; }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || ('HTTP ' + res.status));
+        }
+        quiz = await res.json();
+        if (!quiz.isOwner) throw new Error('Nur der Ersteller kann das Quiz testen.');
+        if (!quiz.questions || !quiz.questions.length) throw new Error('Das Quiz hat noch keine Fragen.');
+        applyBrand();
+        $('quizName').textContent = quiz.name;
+        $('quizDesc').textContent = quiz.description || '';
+        $('qCount').textContent = quiz.questions.length + ' Frage' + (quiz.questions.length === 1 ? '' : 'n');
+        show('introCard');
+      } catch (err) {
+        $('errorCard').textContent = err.message;
+        show('errorCard');
+      }
+    }
+
+    function startGame() {
+      order = shuffle(quiz.questions);
+      idx = 0;
+      score = 0;
+      correctCount = 0;
+      showQuestion();
+    }
+
+    function runTimer(limitSec) {
+      if (timerHandle) clearInterval(timerHandle);
+      deadline = Date.now() + limitSec * 1000;
+      const bar = $('timerBar');
+      const txt = $('qTimer');
+      const total = limitSec * 1000;
+      function tick() {
+        const left = Math.max(0, deadline - Date.now());
+        bar.style.width = (left / total * 100) + '%';
+        txt.textContent = Math.ceil(left / 1000) + ' s';
+        if (left <= 0) {
+          clearInterval(timerHandle);
+          timerHandle = null;
+          if (!answered) submit(null);
+        }
+      }
+      tick();
+      timerHandle = setInterval(tick, 200);
+    }
+
+    function showQuestion() {
+      const q = order[idx];
+      if (!q) return endGame();
+      answered = false;
+      questionStart = Date.now();
+      show('questionCard');
+      $('qIndex').textContent = 'Frage ' + (idx + 1) + ' / ' + order.length + (q.type === 'text' ? ' · Freitext' : '');
+      $('qText').textContent = q.text;
+      const ans = $('qAnswers');
+      ans.innerHTML = '';
+      if (q.type === 'text') {
+        ans.className = '';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'textInput';
+        input.maxLength = 200;
+        input.placeholder = 'Deine Antwort ...';
+        input.autocomplete = 'off';
+        input.autocapitalize = 'off';
+        input.spellcheck = false;
+        ans.appendChild(input);
+        const btn = document.createElement('button');
+        btn.textContent = 'Antwort absenden';
+        btn.className = 'spaced';
+        btn.style.width = '100%';
+        btn.onclick = () => submit(input.value);
+        ans.appendChild(btn);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(input.value); });
+        setTimeout(() => input.focus(), 50);
+      } else {
+        ans.className = 'answer-grid' + (q.answers.length <= 2 ? ' cols-1' : '');
+        q.answers.forEach((a, i) => {
+          const btn = document.createElement('button');
+          btn.className = 'answer-btn c' + i;
+          btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
+          btn.onclick = () => submit(i, btn);
+          ans.appendChild(btn);
+        });
+      }
+      runTimer(effectiveTimeLimit(q));
+    }
+
+    function submit(value, btn) {
+      if (answered) return;
+      answered = true;
+      if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
+      const q = order[idx];
+      const totalTime = effectiveTimeLimit(q) * 1000;
+      const elapsed = Date.now() - questionStart;
+      let correct = false;
+      if (value !== null && value !== undefined) {
+        if (q.type === 'text') {
+          correct = isTextAnswerCorrect(String(value), q.acceptedAnswers);
+        } else {
+          correct = value === q.correctIndex;
+        }
+      }
+      let gained = 0;
+      if (correct) {
+        const remaining = Math.max(0, totalTime - elapsed);
+        const speed = remaining / totalTime;
+        gained = Math.round(POINTS_BASE * (0.5 + 0.5 * speed));
+        score += gained;
+        correctCount += 1;
+      }
+
+      // Highlight selection for MC
+      if (q.type !== 'text' && typeof value === 'number') {
+        document.querySelectorAll('#qAnswers .answer-btn').forEach((b, i) => {
+          b.disabled = true;
+          if (i !== value && i !== q.correctIndex) b.classList.add('dim');
+        });
+        if (btn) btn.classList.add('selected');
+      }
+
+      showReview(correct, gained, q);
+    }
+
+    function showReview(correct, gained, q) {
+      show('reviewCard');
+      const banner = $('resultBanner');
+      if (correct) {
+        banner.className = 'banner-good';
+        banner.textContent = '✅ Richtig! +' + gained + ' Punkte';
+      } else {
+        banner.className = 'banner-bad';
+        let html = '❌ Falsch';
+        if (q.type === 'text' && q.acceptedAnswers && q.acceptedAnswers.length) {
+          html += '<div class="small spaced" style="opacity:.85">Korrekt: ' + q.acceptedAnswers.map((a) => '<strong>' + escapeHtml(a) + '</strong>').join(' / ') + '</div>';
+        } else if (q.type !== 'text' && q.answers && q.answers[q.correctIndex]) {
+          html += '<div class="small spaced" style="opacity:.85">Korrekt: <strong>' + escapeHtml(q.answers[q.correctIndex]) + '</strong></div>';
+        }
+        banner.innerHTML = html;
+      }
+      $('myScore').textContent = score;
+      const isLast = idx + 1 >= order.length;
+      $('nextBtn').textContent = isLast ? 'Endstand zeigen' : 'Nächste Frage';
+    }
+
+    function endGame() {
+      show('endCard');
+      $('endCorrect').textContent = correctCount;
+      $('endTotal').textContent = order.length;
+      $('endScore').textContent = score;
+    }
+
+    $('startBtn').onclick = startGame;
+    $('nextBtn').onclick = () => {
+      idx += 1;
+      if (idx >= order.length) endGame();
+      else showQuestion();
+    };
+    $('restartBtn').onclick = startGame;
+
+    load();
+  </script>
+</body>
+</html>

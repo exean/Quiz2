@@ -17,7 +17,10 @@
         <h1 id="title">Quiz</h1>
         <p class="muted small" id="subtitle"></p>
       </div>
-      <a class="btn secondary" href="/dashboard.html">Zurück</a>
+      <div class="row" style="flex:0 0 auto;gap:.4rem">
+        <a class="btn" id="testBtn" href="#" hidden>▶ Testen</a>
+        <a class="btn secondary" href="/dashboard.html">Zurück</a>
+      </div>
     </div>
 
     <div class="card" id="metaCard" hidden>
@@ -50,6 +53,19 @@
       <h3 class="spaced">Theme</h3>
       <div class="theme-swatches" id="themeSwatches"></div>
       <div id="themeMsg" class="small spaced"></div>
+    </div>
+
+    <div class="card" id="collabCard" hidden>
+      <div class="flex-between">
+        <div style="min-width:0">
+          <h2 style="margin:0 0 .15rem">Zusammenarbeit</h2>
+          <p class="muted small" style="margin:0">Quiz gemeinsam mit anderen User:innen bearbeiten</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="collabToggle" />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="card" id="modeCard" hidden>
@@ -279,19 +295,14 @@
         input.value = t.key;
         if (t.key === selected) input.checked = true;
         input.addEventListener('change', () => saveTheme(t.key));
-        const dots = document.createElement('div');
-        dots.className = 'dots';
-        t.colors.forEach((c) => {
-          const dot = document.createElement('div');
-          dot.className = 'dot';
-          dot.style.background = c;
-          dots.appendChild(dot);
-        });
+        const preview = document.createElement('div');
+        preview.className = 'theme-preview';
+        preview.style.background = 'linear-gradient(135deg, ' + t.colors[0] + ' 0%, ' + t.colors[1] + ' 55%, ' + t.colors[2] + ' 100%)';
         const label = document.createElement('div');
-        label.className = 'label';
+        label.className = 'theme-label';
         label.textContent = t.label;
         lab.appendChild(input);
-        lab.appendChild(dots);
+        lab.appendChild(preview);
         lab.appendChild(label);
         target.appendChild(lab);
       });
@@ -437,11 +448,19 @@
       // Theme: apply for preview (everyone sees the quiz's theme)
       applyTheme(quiz.theme);
 
+      // Test button (owner only, and only if there are questions)
+      const canTest = quiz.isOwner && quiz.totalCount > 0;
+      if (canTest) {
+        $('testBtn').href = '/test.html?quiz=' + encodeURIComponent(quizId);
+        $('testBtn').hidden = false;
+      } else {
+        $('testBtn').hidden = true;
+      }
+
       // Owner-only sections
       $('metaCard').hidden = !quiz.isOwner;
-      $('modeCard').hidden = !quiz.isOwner;
-      $('membersCard').hidden = !quiz.isOwner;
       $('brandCard').hidden = !quiz.isOwner;
+      $('collabCard').hidden = !quiz.isOwner;
 
       if (quiz.isOwner) {
         $('qName').value = quiz.name;
@@ -453,6 +472,16 @@
         renderMembers(quiz.members);
         renderThemeSwatches(quiz.theme);
         renderLogo(quiz.logo);
+
+        // Collaboration toggle (local UI state, persisted per-quiz in localStorage)
+        const hasMembers = quiz.members.members.length > 0 || quiz.members.pendingEmails.length > 0;
+        const stored = localStorage.getItem('collab:' + quizId);
+        const collabOn = hasMembers || stored === '1';
+        $('collabToggle').checked = collabOn;
+        updateCollabVisibility(collabOn);
+      } else {
+        $('modeCard').hidden = true;
+        $('membersCard').hidden = true;
       }
 
       // Form: everyone (owner & member) can add own questions
@@ -724,6 +753,26 @@
         msg.textContent = err.message;
       }
     };
+
+    function updateCollabVisibility(on) {
+      $('modeCard').hidden = !on;
+      $('membersCard').hidden = !on;
+    }
+
+    $('collabToggle').addEventListener('change', () => {
+      const on = $('collabToggle').checked;
+      if (!on && currentQuiz) {
+        const hasMembers = currentQuiz.members.members.length > 0 || currentQuiz.members.pendingEmails.length > 0;
+        if (hasMembers) {
+          alert('Bitte zuerst alle Mitwirkenden entfernen, bevor du die Zusammenarbeit ausschaltest.');
+          $('collabToggle').checked = true;
+          return;
+        }
+      }
+      if (on) localStorage.setItem('collab:' + quizId, '1');
+      else localStorage.removeItem('collab:' + quizId);
+      updateCollabVisibility(on);
+    });
 
     document.querySelectorAll('input[name="mode"], input[name="hostMode"]').forEach((el) => {
       el.addEventListener('change', async () => {

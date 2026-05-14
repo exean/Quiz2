@@ -11,96 +11,42 @@
   <script src="/bg.js" defer></script>
 </head>
 <body>
-  <div class="container">
-    <div class="card center hero">
-      <span class="hero-eyebrow">Live · Mehrspieler · Synchronisiert</span>
-      <h1 class="hero-title gradient-text">Quiz</h1>
-      <p class="hero-sub">Stelle Fragen. Lade Freunde ein. Spielt synchron auf jedem Bildschirm.</p>
-      <div class="hero-cta">
-        <a class="btn" href="/play.html">Spiel beitreten</a>
-        <a class="btn secondary" href="/login.html">Quiz erstellen</a>
-      </div>
-    </div>
-
-    <div class="feature-grid">
-      <div class="card feature">
-        <div class="feature-icon">🎯</div>
-        <h2>Live-Multiplayer</h2>
-        <p class="muted small">Bis zu beliebig viele Spieler auf Smartphones, alle bekommen synchron dieselbe Frage.</p>
-      </div>
-      <div class="card feature">
-        <div class="feature-icon">📱</div>
-        <h2>QR-Code beitreten</h2>
-        <p class="muted small">Spieler scannen einen QR-Code und sind sofort dabei – keine App nötig.</p>
-      </div>
-      <div class="card feature">
-        <div class="feature-icon">🔐</div>
-        <h2>Passkey-Login</h2>
-        <p class="muted small">Einloggen per Fingerabdruck oder Face-ID. Eigene Quizzes bleiben privat.</p>
-      </div>
-      <div class="card feature">
-        <div class="feature-icon">⚡</div>
-        <h2>Schnelligkeit zählt</h2>
-        <p class="muted small">Wer richtig und schnell antwortet, bekommt mehr Punkte. Live-Leaderboard inklusive.</p>
-      </div>
+  <div class="container hub">
+    <h1 class="hub-title gradient-text">Quiz</h1>
+    <div class="hub-actions">
+      <a class="btn hub-btn" href="/play.html">🎮 Beitreten</a>
+      <a class="btn secondary hub-btn" href="/login.html">✏ Quiz erstellen</a>
     </div>
   </div>
 
   <style>
-    .hero { padding: 3rem 1.5rem; }
-    .hero-eyebrow {
-      display: inline-block;
-      font-size: .75rem;
-      font-weight: 600;
-      letter-spacing: .15em;
-      text-transform: uppercase;
-      padding: .4rem .9rem;
-      border-radius: 999px;
-      background: rgba(168, 85, 247, .15);
-      border: 1px solid rgba(168, 85, 247, .35);
-      color: #d8b4fe;
-      margin-bottom: 1.25rem;
+    .hub {
+      min-height: 70vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 2rem;
+      text-align: center;
     }
-    .hero-title {
-      font-size: clamp(3rem, 12vw, 5.5rem);
+    .hub-title {
+      font-size: clamp(4rem, 16vw, 7rem);
       font-weight: 800;
       line-height: 1;
-      margin: 0 0 1rem;
-      letter-spacing: -.04em;
+      letter-spacing: -.05em;
+      margin: 0;
     }
-    .hero-sub {
-      color: var(--muted-strong);
-      font-size: clamp(1rem, 2.5vw, 1.15rem);
-      max-width: 28rem;
-      margin: 0 auto 1.75rem;
-    }
-    .hero-cta {
+    .hub-actions {
       display: flex;
-      gap: .75rem;
-      justify-content: center;
-      flex-wrap: wrap;
+      flex-direction: column;
+      gap: .85rem;
+      width: 100%;
+      max-width: 320px;
     }
-    .feature-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 1rem;
+    .hub-btn {
+      padding: 1.1rem 1.5rem;
+      font-size: 1.05rem;
     }
-    @media (min-width: 600px) {
-      .feature-grid { grid-template-columns: 1fr 1fr; }
-    }
-    .feature { margin-bottom: 0; }
-    .feature-icon {
-      font-size: 1.75rem;
-      width: 3rem; height: 3rem;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 12px;
-      background: linear-gradient(135deg, rgba(34, 211, 238, .18), rgba(168, 85, 247, .18));
-      border: 1px solid var(--border);
-      margin-bottom: .75rem;
-    }
-    .feature h2 { font-size: 1.05rem; margin-bottom: .35rem; }
   </style>
 </body>
 </html>
