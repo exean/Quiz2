@@ -111,7 +111,7 @@
           ? q.ownQuestions + ' eigene · ' + q.totalQuestions + ' gesamt'
           : q.totalQuestions + ' Frage' + (q.totalQuestions === 1 ? '' : 'n');
         const playBtn = q.canHost
-          ? '<a class="btn" href="/host.html?quiz=' + encodeURIComponent(q.id) + '" ' + (playable ? '' : 'style="opacity:.4;pointer-events:none"') + '>Spielen</a>'
+          ? '<a class="btn" href="/host.html?quiz=' + encodeURIComponent(q.id) + '&theme=' + encodeURIComponent(q.theme || 'default') + '" ' + (playable ? '' : 'style="opacity:.4;pointer-events:none"') + '>Spielen</a>'
           : '';
         const deleteBtn = q.role === 'owner'
           ? '<button class="danger" data-del="' + q.id + '">Löschen</button>'

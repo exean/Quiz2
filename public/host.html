@@ -8,17 +8,25 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script>
+    // Apply theme synchronously before paint, if the dashboard passed it.
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      if (t && /^[a-z-]+$/.test(t)) document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <script src="/bg.js" defer></script>
   <script src="/markdown.js" defer></script>
 </head>
 <body>
   <div class="container">
     <div id="startCard" class="card center">
-      <h1 id="hostTitle">Spiel starten</h1>
-      <p class="muted" id="hostSub">Spiel mit dem ausgewählten Quiz erstellen.</p>
-      <button id="createBtn">Spiel erstellen</button>
-      <div class="spaced"><a class="btn secondary" href="/dashboard.html">Zurück zum Dashboard</a></div>
+      <p class="muted">Spiel wird erstellt ...</p>
       <div id="createError" class="banner-bad small spaced" hidden></div>
+      <div id="retryWrap" class="spaced" hidden>
+        <button id="createBtn">Erneut versuchen</button>
+        <a class="btn secondary spaced" href="/dashboard.html">Zurück</a>
+      </div>
     </div>
 
     <div id="lobbyCard" class="card center" hidden>
@@ -33,6 +41,11 @@
           <p class="muted">Game-PIN</p>
           <div class="pin" id="pinDisplay">------</div>
           <p class="muted small">QR scannen oder<br><strong id="joinUrl">/play.html</strong> öffnen</p>
+          <div class="row spaced" style="justify-content:center">
+            <button id="shareBtn" type="button" class="secondary" style="padding:.55rem 1.1rem">📤 Teilen</button>
+            <button id="copyBtn" type="button" class="secondary" style="padding:.55rem 1.1rem">📋 Link</button>
+          </div>
+          <div id="shareMsg" class="muted small" style="margin-top:.35rem;min-height:1.2em"></div>
         </div>
       </div>
       <p class="muted small" id="totalQ"></p>
@@ -80,6 +93,10 @@
 
     const socket = io({ withCredentials: true });
     let currentTimer = null;
+    let currentJoinUrl = '';
+    let currentPin = '';
+    let currentQuizName = '';
+    let gameCreated = false;
 
     function show(id) {
       ['startCard', 'lobbyCard', 'questionCard', 'reviewCard', 'endCard'].forEach((x) => {
@@ -88,7 +105,7 @@
     }
 
     function applyBrand(theme, logo) {
-      document.documentElement.dataset.theme = theme || 'default';
+      if (theme) document.documentElement.dataset.theme = theme;
       if (logo) {
         $('lobbyLogo').src = logo;
         $('lobbyLogo').hidden = false;
@@ -97,16 +114,22 @@
       }
     }
 
-    $('createBtn').onclick = () => {
+    function createGame() {
+      $('createError').hidden = true;
+      $('retryWrap').hidden = true;
       socket.emit('host:create', { quizId, origin: location.origin }, (resp) => {
         if (resp && resp.error) {
           $('createError').textContent = resp.error;
           $('createError').hidden = false;
+          $('retryWrap').hidden = false;
           return;
         }
+        gameCreated = true;
+        currentPin = resp.pin;
+        currentJoinUrl = resp.joinUrl || (location.origin + '/play.html?pin=' + resp.pin);
+        currentQuizName = resp.quizName;
         $('pinDisplay').textContent = resp.pin;
-        const joinUrl = resp.joinUrl || (location.origin + '/play.html?pin=' + resp.pin);
-        $('joinUrl').textContent = joinUrl.replace(/^https?:\/\//, '');
+        $('joinUrl').textContent = currentJoinUrl.replace(/^https?:\/\//, '');
         $('totalQ').textContent = resp.totalQuestions + ' Fragen';
         $('lobbyName').textContent = resp.quizName;
         applyBrand(resp.theme, resp.logo);
@@ -116,6 +139,47 @@
         }
         show('lobbyCard');
       });
+    }
+    $('createBtn').onclick = createGame;
+
+    // Auto-start as soon as we're connected.
+    socket.on('connect', () => {
+      if (!gameCreated) createGame();
+    });
+
+    function flashShareMsg(text) {
+      $('shareMsg').textContent = text;
+      clearTimeout(flashShareMsg._t);
+      flashShareMsg._t = setTimeout(() => { $('shareMsg').textContent = ''; }, 2000);
+    }
+
+    $('shareBtn').onclick = async () => {
+      const shareData = {
+        title: 'Quiz: ' + currentQuizName,
+        text: 'Mach mit bei "' + currentQuizName + '" – PIN ' + currentPin,
+        url: currentJoinUrl,
+      };
+      if (navigator.share) {
+        try { await navigator.share(shareData); flashShareMsg('✓ Geteilt'); }
+        catch (err) { if (err && err.name !== 'AbortError') flashShareMsg('Teilen fehlgeschlagen'); }
+      } else {
+        // Fallback: copy
+        try {
+          await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url);
+          flashShareMsg('Link kopiert');
+        } catch (_) {
+          flashShareMsg('Teilen wird vom Browser nicht unterstützt');
+        }
+      }
+    };
+
+    $('copyBtn').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(currentJoinUrl);
+        flashShareMsg('✓ Link kopiert');
+      } catch (_) {
+        flashShareMsg('Kopieren fehlgeschlagen');
+      }
     };
 
     socket.on('lobby:update', (data) => {
