@@ -757,7 +757,10 @@ function quizListEntry(quiz, userId) {
 }
 
 function questionType(q) {
-  return q && q.type === 'text' ? 'text' : 'multiple-choice';
+  if (!q) return 'multiple-choice';
+  if (q.type === 'text') return 'text';
+  if (q.type === 'slider') return 'slider';
+  return 'multiple-choice';
 }
 
 function normaliseQuestion(q, fallbackUserId) {
@@ -771,6 +774,13 @@ function normaliseQuestion(q, fallbackUserId) {
   };
   if (base.type === 'text') {
     base.acceptedAnswers = Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers.slice() : [];
+  } else if (base.type === 'slider') {
+    base.min = Number.isFinite(+q.min) ? +q.min : 0;
+    base.max = Number.isFinite(+q.max) ? +q.max : 100;
+    base.correctValue = Number.isFinite(+q.correctValue) ? +q.correctValue : Math.round((base.min + base.max) / 2);
+    base.tolerance = Number.isFinite(+q.tolerance) ? Math.max(0, +q.tolerance) : 0;
+    base.step = Number.isFinite(+q.step) ? Math.max(1, +q.step) : 1;
+    base.unit = typeof q.unit === 'string' ? q.unit.slice(0, 12) : '';
   } else {
     base.answers = Array.isArray(q.answers) ? q.answers.slice() : [];
     base.correctIndex = q.correctIndex;
@@ -793,6 +803,12 @@ function validateQuestion(q) {
     if (q.acceptedAnswers.some((a) => typeof a !== 'string' || !a.trim())) {
       return 'Akzeptierte Antworten dürfen nicht leer sein';
     }
+  } else if (type === 'slider') {
+    if (!Number.isFinite(+q.min) || !Number.isFinite(+q.max)) return 'Min/Max müssen Zahlen sein';
+    if (+q.min >= +q.max) return 'Min muss kleiner als Max sein';
+    if (!Number.isFinite(+q.correctValue)) return 'Korrekter Wert fehlt';
+    if (+q.correctValue < +q.min || +q.correctValue > +q.max) return 'Korrekter Wert liegt außerhalb von Min/Max';
+    if (!Number.isFinite(+q.tolerance) || +q.tolerance < 0) return 'Toleranz muss ≥ 0 sein';
   } else {
     if (!Array.isArray(q.answers) || q.answers.length < 2 || q.answers.length > 6) {
       return 'Es müssen 2-6 Antworten angegeben werden';
@@ -1156,7 +1172,8 @@ app.delete('/api/quizzes/:id/members/:key', authMiddleware, (req, res) => {
 /* questions */
 
 function buildQuestionPayload(body, base) {
-  const type = body.type === 'text' ? 'text' : 'multiple-choice';
+  const rawType = body.type;
+  const type = rawType === 'text' ? 'text' : rawType === 'slider' ? 'slider' : 'multiple-choice';
   const time = body.timeLimit !== undefined
     ? Math.max(5, Math.min(120, Number(body.timeLimit) || 20))
     : (base && base.timeLimit) || 20;
@@ -1166,19 +1183,39 @@ function buildQuestionPayload(body, base) {
     text: body.text !== undefined ? String(body.text).trim() : (base && base.text),
     timeLimit: time,
   };
+  // wipe type-specific fields then set the ones we need
+  delete out.acceptedAnswers;
+  delete out.answers;
+  delete out.correctIndex;
+  delete out.min;
+  delete out.max;
+  delete out.correctValue;
+  delete out.tolerance;
+  delete out.step;
+  delete out.unit;
   if (type === 'text') {
     const list = Array.isArray(body.acceptedAnswers)
       ? body.acceptedAnswers
       : (base && base.acceptedAnswers) || [];
     out.acceptedAnswers = list.map((a) => String(a).trim()).filter((a) => a);
-    delete out.answers;
-    delete out.correctIndex;
+  } else if (type === 'slider') {
+    const src = body || {};
+    const min = src.min !== undefined ? Number(src.min) : (base ? base.min : 0);
+    const max = src.max !== undefined ? Number(src.max) : (base ? base.max : 100);
+    const correct = src.correctValue !== undefined ? Number(src.correctValue) : (base ? base.correctValue : 50);
+    const tol = src.tolerance !== undefined ? Math.max(0, Number(src.tolerance)) : (base ? base.tolerance : 0);
+    const step = src.step !== undefined ? Math.max(1, Number(src.step)) : (base ? base.step : 1);
+    out.min = min;
+    out.max = max;
+    out.correctValue = correct;
+    out.tolerance = tol;
+    out.step = step;
+    out.unit = typeof src.unit === 'string' ? src.unit.slice(0, 12) : (base ? base.unit : '');
   } else {
     out.answers = Array.isArray(body.answers)
       ? body.answers.map((a) => String(a).trim())
       : ((base && base.answers) || []);
     out.correctIndex = body.correctIndex !== undefined ? Number(body.correctIndex) : (base && base.correctIndex);
-    delete out.acceptedAnswers;
   }
   return out;
 }
@@ -1324,6 +1361,18 @@ function exportQuiz(quiz) {
           type: 'text',
           text: q.text,
           acceptedAnswers: (q.acceptedAnswers || []).slice(),
+          timeLimit: q.timeLimit,
+        };
+      }
+      if (q.type === 'slider') {
+        return {
+          type: 'slider',
+          text: q.text,
+          min: q.min, max: q.max,
+          correctValue: q.correctValue,
+          tolerance: q.tolerance,
+          step: q.step,
+          unit: q.unit || '',
           timeLimit: q.timeLimit,
         };
       }
@@ -1930,7 +1979,13 @@ function makePin() {
 }
 
 function publicPlayers(game) {
-  return Array.from(game.players.values()).map((p) => ({ id: p.id, name: p.name, score: p.score }));
+  return Array.from(game.players.values()).map((p) => ({
+    id: p.id,
+    name: p.name,
+    avatar: p.avatar || null,
+    score: p.score,
+    connected: p.connected !== false,
+  }));
 }
 function leaderboard(game) {
   return publicPlayers(game).sort((a, b) => b.score - a.score);
@@ -1975,7 +2030,7 @@ function startQuestion(game) {
   } else {
     game.currentPermutation = null;
   }
-  io.to(game.pin).emit('question:start', {
+  const startPayload = {
     index: game.currentIndex,
     total: game.questions.length,
     type: q.type,
@@ -1984,7 +2039,15 @@ function startQuestion(game) {
     answers: answersOut,
     timeLimit: limit,
     deadline,
-  });
+  };
+  if (q.type === 'slider') {
+    startPayload.min = q.min;
+    startPayload.max = q.max;
+    startPayload.step = q.step;
+    startPayload.unit = q.unit || '';
+  }
+  game.currentStartPayload = startPayload;
+  io.to(game.pin).emit('question:start', startPayload);
   if (game.timer) clearTimeout(game.timer);
   game.timer = setTimeout(() => endQuestion(game, 'timeout'), limit * 1000);
 }
@@ -2001,10 +2064,14 @@ function endQuestion(game, reason) {
     let gained = 0;
     let choice = null;
     let text = null;
+    let value = null;
     if (ans) {
       if (q.type === 'text') {
         text = ans.text;
         correct = isTextAnswerCorrect(ans.text, q.acceptedAnswers);
+      } else if (q.type === 'slider') {
+        value = ans.value;
+        correct = Math.abs(ans.value - q.correctValue) <= q.tolerance;
       } else {
         choice = ans.choice;
         correct = ans.choice === q.correctIndex;
@@ -2016,10 +2083,10 @@ function endQuestion(game, reason) {
         player.score += gained;
       }
     }
-    perPlayer.push({ id: player.id, name: player.name, correct, gained, choice, text });
+    perPlayer.push({ id: player.id, name: player.name, avatar: player.avatar || null, correct, gained, choice, text, value });
   }
   let counts = null;
-  if (q.type !== 'text') {
+  if (q.type === 'multiple-choice') {
     counts = q.answers.map(() => 0);
     for (const ans of game.answers.values()) {
       if (typeof ans.choice === 'number' && counts[ans.choice] !== undefined) counts[ans.choice] += 1;
@@ -2035,14 +2102,21 @@ function endQuestion(game, reason) {
     answers: q.type === 'multiple-choice' ? q.answers.slice() : null,
     correctIndex: q.type === 'multiple-choice' ? q.correctIndex : null,
     acceptedAnswers: q.type === 'text' ? (q.acceptedAnswers || []).slice() : null,
+    sliderMin: q.type === 'slider' ? q.min : null,
+    sliderMax: q.type === 'slider' ? q.max : null,
+    correctValue: q.type === 'slider' ? q.correctValue : null,
+    tolerance: q.type === 'slider' ? q.tolerance : null,
+    sliderUnit: q.type === 'slider' ? (q.unit || '') : null,
     counts: counts ? counts.slice() : null,
     perPlayer: perPlayer.map((p) => ({
       id: p.id,
       name: p.name,
+      avatar: p.avatar,
       correct: p.correct,
       gained: p.gained,
       choice: p.choice,
       text: p.text,
+      value: p.value,
     })),
     endedAt: new Date().toISOString(),
   });
@@ -2062,6 +2136,11 @@ function endQuestion(game, reason) {
     answers: emitAnswers,
     correctIndex: emitCorrect,
     acceptedAnswers: q.type === 'text' ? q.acceptedAnswers : null,
+    correctValue: q.type === 'slider' ? q.correctValue : null,
+    tolerance: q.type === 'slider' ? q.tolerance : null,
+    sliderMin: q.type === 'slider' ? q.min : null,
+    sliderMax: q.type === 'slider' ? q.max : null,
+    sliderUnit: q.type === 'slider' ? (q.unit || '') : null,
     counts: emitCounts,
     perPlayer,
     leaderboard: leaderboard(game),
@@ -2076,6 +2155,8 @@ function endQuestion(game, reason) {
       type: q.type,
       correctIndex: emitCorrect,
       acceptedAnswers: q.type === 'text' ? q.acceptedAnswers : null,
+      correctValue: q.type === 'slider' ? q.correctValue : null,
+      sliderUnit: q.type === 'slider' ? (q.unit || '') : null,
     });
   }
 }
@@ -2158,6 +2239,7 @@ io.on('connection', (socket) => {
       hostSocketId: socket.id,
       hostUserId: socket.data.userId,
       players: new Map(),
+      socketToToken: new Map(),
       quizId: quiz.id,
       quizName: quiz.name,
       quizDescription: quiz.description,
@@ -2205,28 +2287,73 @@ io.on('connection', (socket) => {
     broadcastLobby(game);
   });
 
-  socket.on('player:join', ({ pin, name }, cb) => {
+  socket.on('player:join', ({ pin, name, avatar, token } = {}, cb) => {
     const game = games.get(String(pin || '').trim());
     if (!game) return cb && cb({ error: 'Game-PIN unbekannt' });
+
+    // Reconnect path: token must match a player already in the game.
+    if (token && game.players.has(token)) {
+      const player = game.players.get(token);
+      if (player.socketId) game.socketToToken.delete(player.socketId);
+      player.socketId = socket.id;
+      player.connected = true;
+      game.socketToToken.set(socket.id, token);
+      socket.join(game.pin);
+      socket.data.role = 'player';
+      socket.data.pin = game.pin;
+      socket.data.playerToken = token;
+      cb && cb({
+        ok: true, reconnected: true,
+        pin: game.pin, name: player.name, token, avatar: player.avatar,
+        quizName: game.quizName, theme: game.theme, logo: game.logo,
+        score: player.score,
+      });
+      broadcastLobby(game);
+      if (game.state === 'question' && game.currentStartPayload) {
+        socket.emit('question:start', game.currentStartPayload);
+        if (game.answers.has(token)) {
+          socket.emit('answer:locked');
+        }
+      }
+      return;
+    }
+
     if (game.state !== 'lobby') return cb && cb({ error: 'Spiel hat bereits begonnen' });
     const clean = String(name || '').trim().slice(0, 20);
     if (!clean) return cb && cb({ error: 'Bitte einen Namen eingeben' });
     for (const p of game.players.values()) {
-      if (p.name.toLowerCase() === clean.toLowerCase()) return cb && cb({ error: 'Name ist bereits vergeben' });
+      if (p.connected && p.name.toLowerCase() === clean.toLowerCase()) {
+        return cb && cb({ error: 'Name ist bereits vergeben' });
+      }
     }
-    const player = { id: socket.id, socketId: socket.id, name: clean, score: 0 };
-    game.players.set(socket.id, player);
+    const newToken = crypto.randomBytes(16).toString('base64url');
+    const player = {
+      id: newToken,
+      token: newToken,
+      socketId: socket.id,
+      name: clean,
+      avatar: typeof avatar === 'string' ? avatar.slice(0, 8) : null,
+      score: 0,
+      connected: true,
+    };
+    game.players.set(newToken, player);
+    game.socketToToken.set(socket.id, newToken);
     socket.join(game.pin);
     socket.data.role = 'player';
     socket.data.pin = game.pin;
-    cb && cb({ ok: true, pin: game.pin, name: clean, quizName: game.quizName, theme: game.theme, logo: game.logo });
+    socket.data.playerToken = newToken;
+    cb && cb({
+      ok: true, pin: game.pin, name: clean, token: newToken, avatar: player.avatar,
+      quizName: game.quizName, theme: game.theme, logo: game.logo,
+    });
     broadcastLobby(game);
   });
 
   socket.on('host:start', (_p, cb) => {
     const game = games.get(socket.data.pin);
     if (!game || game.hostSocketId !== socket.id) return cb && cb({ error: 'Nur der Host darf starten' });
-    if (game.players.size === 0) return cb && cb({ error: 'Mindestens ein Spieler nötig' });
+    const connectedPlayers = Array.from(game.players.values()).filter((p) => p.connected !== false);
+    if (connectedPlayers.length === 0) return cb && cb({ error: 'Mindestens ein Spieler nötig' });
     if (game.state !== 'lobby') return cb && cb({ error: 'Spiel läuft bereits' });
     game.startedAt = Date.now();
     game.currentIndex = 0;
@@ -2244,32 +2371,39 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true });
   });
 
-  socket.on('player:answer', ({ choice, text }, cb) => {
+  socket.on('player:answer', ({ choice, text, value } = {}, cb) => {
     const game = games.get(socket.data.pin);
     if (!game || game.state !== 'question') return cb && cb({ error: 'Keine aktive Frage' });
+    const token = socket.data.playerToken;
+    if (!token || !game.players.has(token)) return cb && cb({ error: 'Spieler nicht erkannt' });
     const q = game.questions[game.currentIndex];
-    if (game.answers.has(socket.id)) return cb && cb({ error: 'Schon beantwortet' });
+    if (game.answers.has(token)) return cb && cb({ error: 'Schon beantwortet' });
 
     if (q.type === 'text') {
       const answer = String(text || '').trim().slice(0, TEXT_ANSWER_MAX_LEN);
       if (!answer) return cb && cb({ error: 'Antwort darf nicht leer sein' });
-      game.answers.set(socket.id, { text: answer, at: Date.now() });
+      game.answers.set(token, { text: answer, at: Date.now() });
+    } else if (q.type === 'slider') {
+      const v = Number(value);
+      if (!Number.isFinite(v)) return cb && cb({ error: 'Ungültiger Wert' });
+      const clamped = Math.max(q.min, Math.min(q.max, v));
+      game.answers.set(token, { value: clamped, at: Date.now() });
     } else {
       if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
         return cb && cb({ error: 'Ungültige Antwort' });
       }
-      // Map displayed choice back to original index via permutation
       const perm = game.currentPermutation || q.answers.map((_, i) => i);
       const originalChoice = perm[choice];
-      game.answers.set(socket.id, { choice: originalChoice, at: Date.now() });
+      game.answers.set(token, { choice: originalChoice, at: Date.now() });
     }
 
     cb && cb({ ok: true });
+    const connectedCount = Array.from(game.players.values()).filter((p) => p.connected !== false).length;
     io.to(game.hostSocketId).emit('host:answerProgress', {
       answered: game.answers.size,
-      total: game.players.size,
+      total: connectedCount,
     });
-    if (game.answers.size >= game.players.size) endQuestion(game, 'all-answered');
+    if (game.answers.size >= connectedCount) endQuestion(game, 'all-answered');
   });
 
   socket.on('disconnect', () => {
@@ -2282,12 +2416,27 @@ io.on('connection', (socket) => {
       disposeGame(game);
       return;
     }
-    if (socket.data.role === 'player' && game.players.has(socket.id)) {
-      game.players.delete(socket.id);
-      game.answers.delete(socket.id);
-      broadcastLobby(game);
-      if (game.state === 'question' && game.players.size > 0 && game.answers.size >= game.players.size) {
-        endQuestion(game, 'all-answered');
+    if (socket.data.role === 'player') {
+      const token = socket.data.playerToken;
+      if (token) {
+        const player = game.players.get(token);
+        if (player && player.socketId === socket.id) {
+          player.connected = false;
+          game.socketToToken.delete(socket.id);
+          // In the lobby phase, fully drop disconnected players so a fresh
+          // join with the same name is possible. During a running game keep
+          // them so they can reconnect with their token.
+          if (game.state === 'lobby') {
+            game.players.delete(token);
+          }
+          broadcastLobby(game);
+          if (game.state === 'question') {
+            const connectedCount = Array.from(game.players.values()).filter((p) => p.connected !== false).length;
+            if (connectedCount > 0 && game.answers.size >= connectedCount) {
+              endQuestion(game, 'all-answered');
+            }
+          }
+        }
       }
     }
   });

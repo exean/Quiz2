@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="/bg.js" defer></script>
+  <script src="/markdown.js" defer></script>
 </head>
 <body>
   <div class="container">
@@ -209,15 +210,23 @@
           card.style.padding = '.9rem 0';
           card.style.borderBottom = '1px solid var(--border)';
           const isText = q.type === 'text';
+          const isSlider = q.type === 'slider';
+          const unit = q.sliderUnit ? ' ' + q.sliderUnit : '';
           const correctText = isText
             ? '<div class="small spaced" style="margin-top:.4rem;color:var(--good)"><strong>Korrekt:</strong> ' +
               (q.acceptedAnswers || []).map((a) => escapeHtml(a)).join(' / ') + '</div>'
-            : '<div class="small spaced" style="margin-top:.4rem;color:var(--good)"><strong>Korrekt:</strong> ' +
-              escapeHtml((q.answers || [])[q.correctIndex] || '') + '</div>';
+            : isSlider
+              ? '<div class="small spaced" style="margin-top:.4rem;color:var(--good)"><strong>Korrekt:</strong> ' +
+                q.correctValue + unit + (q.tolerance ? ' (± ' + q.tolerance + unit + ')' : '') + '</div>'
+              : '<div class="small spaced" style="margin-top:.4rem;color:var(--good)"><strong>Korrekt:</strong> ' +
+                escapeHtml((q.answers || [])[q.correctIndex] || '') + '</div>';
+          const textHtml = window.renderMarkdown ? window.renderMarkdown(q.text) : escapeHtml(q.text);
+          const badge = isText ? ' <span class="badge badge-member">Freitext</span>'
+            : isSlider ? ' <span class="badge badge-member">Schätzung</span>'
+            : '';
           card.innerHTML =
             '<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:baseline">' +
-              '<strong>' + (i + 1) + '. ' + escapeHtml(q.text) + '</strong>' +
-              (isText ? ' <span class="badge badge-member">Freitext</span>' : '') +
+              '<strong>' + (i + 1) + '. ' + textHtml + '</strong>' + badge +
             '</div>' +
             correctText;
 
@@ -233,9 +242,11 @@
               row.style.borderTop = '1px solid var(--border)';
               const ans = isText
                 ? (p.text ? '"' + escapeHtml(p.text) + '"' : '<em class="muted">keine</em>')
-                : (p.choice !== null && q.answers ? escapeHtml(q.answers[p.choice] || '?') : '<em class="muted">keine</em>');
+                : isSlider
+                  ? (p.value !== null && p.value !== undefined ? (p.value + unit) : '<em class="muted">keine</em>')
+                  : (p.choice !== null && q.answers ? escapeHtml(q.answers[p.choice] || '?') : '<em class="muted">keine</em>');
               row.innerHTML =
-                '<div><strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + ans + '</span></div>' +
+                '<div>' + (p.avatar ? p.avatar + ' ' : '') + '<strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + ans + '</span></div>' +
                 '<div style="color:' + (p.correct ? 'var(--good)' : 'var(--bad)') + '">' +
                 (p.correct ? '✓ +' + p.gained : '✗') + '</div>';
               list.appendChild(row);

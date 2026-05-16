@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="/bg.js" defer></script>
+  <script src="/markdown.js" defer></script>
 </head>
 <body>
   <div class="container">
@@ -118,21 +119,25 @@
     };
 
     socket.on('lobby:update', (data) => {
-      if (data.quizDescription) $('lobbyDesc').textContent = data.quizDescription;
+      if (data.quizDescription) {
+        if (window.setMarkdown) window.setMarkdown($('lobbyDesc'), data.quizDescription);
+        else $('lobbyDesc').textContent = data.quizDescription;
+      }
       applyBrand(data.theme, data.logo);
       const list = $('playerList');
       list.innerHTML = '';
-      if (!data.players.length) {
+      const connected = data.players.filter((p) => p.connected !== false);
+      if (!connected.length) {
         list.innerHTML = '<p class="muted small">Warte auf Spieler ...</p>';
       } else {
-        data.players.forEach((p) => {
+        connected.forEach((p) => {
           const span = document.createElement('span');
           span.className = 'player-pill';
-          span.textContent = p.name;
+          span.innerHTML = (p.avatar ? '<span class="avatar">' + p.avatar + '</span>' : '') + escapeHtml(p.name);
           list.appendChild(span);
         });
       }
-      $('startBtn').disabled = data.players.length === 0;
+      $('startBtn').disabled = connected.length === 0;
     });
 
     $('startBtn').onclick = () => {
@@ -143,9 +148,11 @@
 
     socket.on('question:start', (data) => {
       show('questionCard');
-      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' von ' + data.total + (data.type === 'text' ? ' · Freitext' : '');
+      const typeLabel = data.type === 'text' ? ' · Freitext' : data.type === 'slider' ? ' · Schätzung' : '';
+      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' von ' + data.total + typeLabel;
       $('progress').textContent = '0 / ' + ($('playerList').children.length || 0) + ' geantwortet';
-      $('qText').textContent = data.text;
+      if (window.setMarkdown) window.setMarkdown($('qText'), data.text);
+      else $('qText').textContent = data.text;
       if (data.image) {
         $('qImage').src = data.image;
         $('qImage').hidden = false;
@@ -162,6 +169,15 @@
         info.style.padding = '1.5rem 1rem';
         info.style.fontSize = '1.05rem';
         info.innerHTML = '⌨ Spieler tippen ihre Antwort auf dem Smartphone. <br><span class="muted small">Zeit: ' + data.timeLimit + 's</span>';
+        ans.appendChild(info);
+      } else if (data.type === 'slider') {
+        ans.className = '';
+        const info = document.createElement('div');
+        info.className = 'banner-warn center';
+        info.style.padding = '1.5rem 1rem';
+        info.style.fontSize = '1.05rem';
+        const unit = data.unit ? ' ' + data.unit : '';
+        info.innerHTML = '🎚 Spieler schätzen einen Wert zwischen <strong>' + data.min + unit + '</strong> und <strong>' + data.max + unit + '</strong>.<br><span class="muted small">Zeit: ' + data.timeLimit + 's</span>';
         ans.appendChild(info);
       } else {
         ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
@@ -188,7 +204,38 @@
       const body = $('reviewBody');
       body.innerHTML = '';
 
-      if (data.type === 'text') {
+      if (data.type === 'slider') {
+        const unit = data.sliderUnit ? ' ' + data.sliderUnit : '';
+        const accepted = document.createElement('div');
+        accepted.style.marginBottom = '.8rem';
+        accepted.innerHTML = '<div class="small muted" style="margin-bottom:.3rem">Korrekter Wert</div>' +
+          '<div style="display:inline-block;padding:.45rem .9rem;border-radius:999px;background:rgba(52,211,153,.15);border:1px solid rgba(52,211,153,.35);color:var(--good);font-weight:700">' +
+          data.correctValue + unit +
+          (data.tolerance ? ' <span class="muted small" style="font-weight:500">(± ' + data.tolerance + unit + ')</span>' : '') +
+          '</div>';
+        body.appendChild(accepted);
+        const list = document.createElement('div');
+        list.innerHTML = '<div class="small muted" style="margin:.6rem 0 .3rem">Schätzungen</div>';
+        const sorted = (data.perPlayer || []).slice().sort((a, b) => {
+          const av = a.value === null || a.value === undefined ? Infinity : Math.abs(a.value - data.correctValue);
+          const bv = b.value === null || b.value === undefined ? Infinity : Math.abs(b.value - data.correctValue);
+          return av - bv;
+        });
+        sorted.forEach((p) => {
+          const row = document.createElement('div');
+          row.style.display = 'flex';
+          row.style.justifyContent = 'space-between';
+          row.style.gap = '.5rem';
+          row.style.padding = '.35rem 0';
+          row.style.borderBottom = '1px solid var(--border)';
+          const ans = (p.value !== null && p.value !== undefined) ? (p.value + unit) : '— keine —';
+          row.innerHTML =
+            '<div>' + (p.avatar ? p.avatar + ' ' : '') + '<strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + escapeHtml(ans) + '</span></div>' +
+            '<div style="color:' + (p.correct ? 'var(--good)' : 'var(--bad)') + '">' + (p.correct ? '✓ +' + p.gained : '✗') + '</div>';
+          list.appendChild(row);
+        });
+        body.appendChild(list);
+      } else if (data.type === 'text') {
         // Accepted answers
         const accepted = document.createElement('div');
         accepted.style.marginBottom = '.8rem';
@@ -220,7 +267,7 @@
           row.style.borderBottom = '1px solid var(--border)';
           const text = p.text ? p.text : '— keine Antwort —';
           row.innerHTML =
-            '<div><strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + escapeHtml(text) + '</span></div>' +
+            '<div>' + (p.avatar ? p.avatar + ' ' : '') + '<strong>' + escapeHtml(p.name) + '</strong> <span class="muted small">' + escapeHtml(text) + '</span></div>' +
             '<div style="color:' + (p.correct ? 'var(--good)' : 'var(--bad)') + '">' + (p.correct ? '✓ +' + p.gained : '✗') + '</div>';
           list.appendChild(row);
         });
@@ -278,7 +325,8 @@
       const tbody = document.createElement('tbody');
       board.forEach((p, i) => {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td class="rank">' + (i + 1) + '</td><td>' + escapeHtml(p.name) + '</td><td class="score">' + p.score + '</td>';
+        const label = (p.avatar ? p.avatar + ' ' : '') + escapeHtml(p.name);
+        tr.innerHTML = '<td class="rank">' + (i + 1) + '</td><td>' + label + '</td><td class="score">' + p.score + '</td>';
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);

@@ -17,6 +17,8 @@
     })();
   </script>
   <script src="/bg.js" defer></script>
+  <script src="/markdown.js" defer></script>
+  <script src="/confetti.js" defer></script>
 </head>
 <body>
   <div class="container">
@@ -206,8 +208,10 @@
       answered = false;
       questionStart = Date.now();
       show('questionCard');
-      $('qIndex').textContent = 'Frage ' + (idx + 1) + ' / ' + order.length + (q.type === 'text' ? ' · Freitext' : '');
-      $('qText').textContent = q.text;
+      const typeLabel = q.type === 'text' ? ' · Freitext' : q.type === 'slider' ? ' · Schätzung' : '';
+      $('qIndex').textContent = 'Frage ' + (idx + 1) + ' / ' + order.length + typeLabel;
+      if (window.setMarkdown) window.setMarkdown($('qText'), q.text);
+      else $('qText').textContent = q.text;
       if (q.image) {
         $('qImage').src = q.image;
         $('qImage').hidden = false;
@@ -236,6 +240,27 @@
         ans.appendChild(btn);
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(input.value); });
         setTimeout(() => input.focus(), 50);
+      } else if (q.type === 'slider') {
+        ans.className = '';
+        const min = Number(q.min) || 0;
+        const max = Number(q.max) || 100;
+        const step = Number(q.step) || 1;
+        const unit = q.unit || '';
+        const startVal = Math.round((min + max) / 2);
+        const wrap = document.createElement('div');
+        wrap.className = 'slider-wrap';
+        wrap.innerHTML =
+          '<div class="slider-value" id="sliderValue">' + startVal + (unit ? '<span class="unit">' + escapeHtml(unit) + '</span>' : '') + '</div>' +
+          '<input class="slider-input" id="sliderInput" type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + startVal + '" />' +
+          '<div class="slider-range"><span>' + min + (unit ? ' ' + escapeHtml(unit) : '') + '</span><span>' + max + (unit ? ' ' + escapeHtml(unit) : '') + '</span></div>' +
+          '<button id="submitSliderBtn" style="width:100%;margin-top:.5rem">Antwort absenden</button>';
+        ans.appendChild(wrap);
+        const input = document.getElementById('sliderInput');
+        const valueEl = document.getElementById('sliderValue');
+        input.addEventListener('input', () => {
+          valueEl.innerHTML = input.value + (unit ? '<span class="unit">' + escapeHtml(unit) + '</span>' : '');
+        });
+        document.getElementById('submitSliderBtn').onclick = () => submit(Number(input.value));
       } else {
         ans.className = 'answer-grid' + (q.answers.length <= 2 ? ' cols-1' : '');
         const shuffle = quiz && quiz.shuffleAnswers !== false;
@@ -272,6 +297,9 @@
       if (value !== null && value !== undefined) {
         if (q.type === 'text') {
           correct = isTextAnswerCorrect(String(value), q.acceptedAnswers);
+        } else if (q.type === 'slider') {
+          const num = Number(value);
+          correct = Math.abs(num - q.correctValue) <= (q.tolerance || 0);
         } else {
           correct = value === q.correctIndex;
         }
@@ -306,12 +334,15 @@
       if (correct) {
         banner.className = 'banner-good';
         banner.textContent = '✅ Richtig! +' + gained + ' Punkte';
+        if (window.confetti) window.confetti();
       } else {
         banner.className = 'banner-bad';
         let html = '❌ Falsch';
         if (q.type === 'text' && q.acceptedAnswers && q.acceptedAnswers.length) {
           html += '<div class="small spaced" style="opacity:.85">Korrekt: ' + q.acceptedAnswers.map((a) => '<strong>' + escapeHtml(a) + '</strong>').join(' / ') + '</div>';
-        } else if (q.type !== 'text' && q.answers && q.answers[q.correctIndex]) {
+        } else if (q.type === 'slider') {
+          html += '<div class="small spaced" style="opacity:.85">Korrekt wäre: <strong>' + q.correctValue + (q.unit ? ' ' + escapeHtml(q.unit) : '') + '</strong></div>';
+        } else if (q.answers && q.answers[q.correctIndex]) {
           html += '<div class="small spaced" style="opacity:.85">Korrekt: <strong>' + escapeHtml(q.answers[q.correctIndex]) + '</strong></div>';
         }
         banner.innerHTML = html;

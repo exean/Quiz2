@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="/bg.js" defer></script>
+  <script src="/markdown.js" defer></script>
 </head>
 <body>
   <div class="container">
@@ -157,9 +158,17 @@
           <input type="radio" name="qType" value="text" />
           <span>⌨ Freitext</span>
         </label>
+        <label class="type-toggle-option">
+          <input type="radio" name="qType" value="slider" />
+          <span>🎚 Schätzung</span>
+        </label>
+        <label class="type-toggle-option">
+          <input type="radio" name="qType" value="true-false" />
+          <span>✓✗ Wahr/Falsch</span>
+        </label>
       </div>
 
-      <label for="qText">Frage</label>
+      <label for="qText">Frage <span class="muted small">(Markdown: **fett** *kursiv* `code` [Link](https://…))</span></label>
       <input id="qText" type="text" />
 
       <div id="mcForm">
@@ -177,6 +186,38 @@
         <div class="row spaced">
           <button id="addAcceptedBtn" class="secondary" type="button">+ Antwort</button>
           <button id="removeAcceptedBtn" class="secondary" type="button">– Antwort</button>
+        </div>
+      </div>
+
+      <div id="sliderForm" hidden>
+        <p class="muted small" style="margin-top:.1rem">Spieler schätzen einen Wert. Liegt die Schätzung innerhalb der Toleranz, gilt sie als korrekt.</p>
+        <div class="row">
+          <div>
+            <label for="sMin">Min</label>
+            <input id="sMin" type="number" value="0" />
+          </div>
+          <div>
+            <label for="sMax">Max</label>
+            <input id="sMax" type="number" value="100" />
+          </div>
+          <div>
+            <label for="sCorrect">Korrekter Wert</label>
+            <input id="sCorrect" type="number" value="50" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="sTol">Toleranz</label>
+            <input id="sTol" type="number" value="0" min="0" />
+          </div>
+          <div>
+            <label for="sStep">Schrittweite</label>
+            <input id="sStep" type="number" value="1" min="1" />
+          </div>
+          <div>
+            <label for="sUnit">Einheit (optional)</label>
+            <input id="sUnit" type="text" maxlength="12" placeholder="z.B. km, kg" />
+          </div>
         </div>
       </div>
 
@@ -432,15 +473,28 @@
       renderAccepted(prev);
     }
 
-    function currentType() {
+    function currentTypeSelection() {
       const r = document.querySelector('input[name="qType"]:checked');
-      return (r && r.value) === 'text' ? 'text' : 'multiple-choice';
+      return r ? r.value : 'multiple-choice';
+    }
+    // The actual stored type ('true-false' is a UI shortcut for MC)
+    function currentStoredType() {
+      const s = currentTypeSelection();
+      return s === 'true-false' ? 'multiple-choice' : s;
     }
 
     function applyTypeUI() {
-      const isText = currentType() === 'text';
-      $('mcForm').hidden = isText;
+      const sel = currentTypeSelection();
+      const isText = sel === 'text';
+      const isSlider = sel === 'slider';
+      const isTF = sel === 'true-false';
+      $('mcForm').hidden = isText || isSlider;
       $('textForm').hidden = !isText;
+      $('sliderForm').hidden = !isSlider;
+      if (isTF && !$('editingId').value) {
+        // Pre-fill Wahr/Falsch
+        setAnswerCount(2, ['Wahr', 'Falsch'], 0);
+      }
     }
 
     document.querySelectorAll('input[name="qType"]').forEach((el) => {
@@ -608,16 +662,20 @@
         info.className = 'list-item-info';
 
         const isText = q.type === 'text';
+        const isSlider = q.type === 'slider';
         const typeBadge = isText
           ? ' <span class="badge badge-member">Freitext</span>'
-          : '';
+          : isSlider
+            ? ' <span class="badge badge-member">Schätzung</span>'
+            : '';
         const playedTime = q.timeLimit + 's';
         const header = document.createElement('div');
         header.style.display = 'flex';
         header.style.flexWrap = 'wrap';
         header.style.gap = '.5rem';
         header.style.alignItems = 'center';
-        header.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + playedTime + ')</span>' + typeBadge + ' <span class="badge badge-author">' + escapeHtml(authorLabel(quiz, q.authorId)) + '</span>';
+        const textHtml = (window.renderMarkdown ? window.renderMarkdown(q.text) : escapeHtml(q.text));
+        header.innerHTML = '<strong>' + (idx + 1) + '. ' + textHtml + '</strong> <span class="muted small">(' + playedTime + ')</span>' + typeBadge + ' <span class="badge badge-author">' + escapeHtml(authorLabel(quiz, q.authorId)) + '</span>';
         info.appendChild(header);
 
         if (q.image && !q.redacted) {
@@ -635,8 +693,16 @@
         if (q.redacted) {
           const note = document.createElement('div');
           note.className = 'question-redacted';
-          note.textContent = isText ? '• Akzeptierte Antworten verborgen' : '• Antworten verborgen (' + q.answersCount + ' Optionen)';
+          note.textContent = isText ? '• Akzeptierte Antworten verborgen'
+            : isSlider ? '• Schätz-Bereich verborgen'
+            : '• Antworten verborgen (' + q.answersCount + ' Optionen)';
           info.appendChild(note);
+        } else if (isSlider) {
+          const span = document.createElement('div');
+          span.className = 'muted small';
+          span.style.marginTop = '.3rem';
+          span.textContent = q.min + '–' + q.max + (q.unit ? ' ' + q.unit : '') + ' · korrekt: ' + q.correctValue + (q.tolerance ? ' ± ' + q.tolerance : '');
+          info.appendChild(span);
         } else if (isText && q.acceptedAnswers) {
           const ul = document.createElement('ul');
           ul.style.margin = '.4rem 0 0 1.2rem';
@@ -746,13 +812,22 @@
       $('cancelEditBtn').hidden = false;
       $('qText').value = q.text;
       $('qTime').value = q.timeLimit;
-      const isText = q.type === 'text';
-      const radio = document.querySelector('input[name="qType"][value="' + (isText ? 'text' : 'multiple-choice') + '"]');
+      let typeSel = 'multiple-choice';
+      if (q.type === 'text') typeSel = 'text';
+      else if (q.type === 'slider') typeSel = 'slider';
+      const radio = document.querySelector('input[name="qType"][value="' + typeSel + '"]');
       if (radio) radio.checked = true;
       applyTypeUI();
-      if (isText) {
+      if (q.type === 'text') {
         const list = (q.acceptedAnswers || []).slice();
         setAcceptedCount(Math.max(1, list.length), list);
+      } else if (q.type === 'slider') {
+        $('sMin').value = q.min;
+        $('sMax').value = q.max;
+        $('sCorrect').value = q.correctValue;
+        $('sTol').value = q.tolerance || 0;
+        $('sStep').value = q.step || 1;
+        $('sUnit').value = q.unit || '';
       } else {
         setAnswerCount(q.answers.length, q.answers.slice(), q.correctIndex);
       }
@@ -770,6 +845,9 @@
       applyTypeUI();
       setAnswerCount(4, ['', '', '', ''], 0);
       setAcceptedCount(1, ['']);
+      $('sMin').value = 0; $('sMax').value = 100;
+      $('sCorrect').value = 50; $('sTol').value = 0;
+      $('sStep').value = 1; $('sUnit').value = '';
     }
 
     $('cancelEditBtn').onclick = resetForm;
@@ -934,11 +1012,18 @@
       const text = $('qText').value.trim();
       const timeLimit = Number($('qTime').value) || 20;
       const editing = $('editingId').value;
-      const type = currentType();
+      const type = currentStoredType();
       const payload = { type, text, timeLimit };
       if (type === 'text') {
         payload.acceptedAnswers = Array.from(document.querySelectorAll('.accepted-input'))
           .map((i) => i.value.trim()).filter((v) => v);
+      } else if (type === 'slider') {
+        payload.min = Number($('sMin').value);
+        payload.max = Number($('sMax').value);
+        payload.correctValue = Number($('sCorrect').value);
+        payload.tolerance = Number($('sTol').value) || 0;
+        payload.step = Number($('sStep').value) || 1;
+        payload.unit = $('sUnit').value.trim();
       } else {
         payload.answers = Array.from(document.querySelectorAll('.answer-input')).map((i) => i.value.trim());
         payload.correctIndex = Number((document.querySelector('input[name="correct"]:checked') || {}).value || 0);

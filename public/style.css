@@ -635,6 +635,116 @@ tbody tr:last-child td { border-bottom: none; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
+/* Slider question */
+.slider-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  margin: 1rem 0;
+}
+.slider-value {
+  text-align: center;
+  font-size: clamp(2.5rem, 8vw, 3.5rem);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-2) 60%, var(--accent-3));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.slider-value .unit {
+  font-size: .55em;
+  margin-left: .25rem;
+  opacity: .8;
+}
+.slider-range {
+  display: flex;
+  justify-content: space-between;
+  font-size: .8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.slider-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-2), var(--accent-3));
+  outline: none;
+  padding: 0;
+  margin: 0;
+}
+.slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  border: 3px solid color-mix(in srgb, var(--accent-2) 65%, #fff);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-2) 45%, transparent);
+}
+.slider-input::-moz-range-thumb {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: #fff; cursor: pointer;
+  border: 3px solid color-mix(in srgb, var(--accent-2) 65%, #fff);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-2) 45%, transparent);
+}
+
+/* Player avatar in pills / lists */
+.player-pill .avatar {
+  font-size: 1.1em;
+  line-height: 1;
+  margin-right: .35rem;
+}
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  gap: .35rem;
+  margin: .5rem 0;
+}
+.avatar-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--surface-strong);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform .12s, border-color .12s;
+  margin: 0;
+}
+.avatar-tile:hover { transform: translateY(-2px); }
+.avatar-tile input { position: absolute; opacity: 0; pointer-events: none; }
+.avatar-tile:has(input:checked) {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 35%, transparent);
+}
+
+/* Reconnect status banner */
+.conn-banner {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  padding: .55rem 1rem;
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: .85rem;
+  font-weight: 500;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.conn-banner.bad { color: var(--bad); border-color: rgba(248, 113, 113, .45); }
+.conn-banner.good { color: var(--good); border-color: rgba(52, 211, 153, .45); }
+
 .theme-swatches {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

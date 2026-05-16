@@ -9,6 +9,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="/bg.js" defer></script>
+  <script src="/markdown.js" defer></script>
+  <script src="/confetti.js" defer></script>
 </head>
 <body>
   <div class="container">
@@ -18,6 +20,8 @@
       <input id="pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-stellig" />
       <label for="name">Dein Name</label>
       <input id="name" type="text" maxlength="20" placeholder="z.B. Anna" />
+      <label>Avatar</label>
+      <div class="avatar-grid" id="avatarGrid"></div>
       <div class="spaced"><button id="joinBtn">Beitreten</button></div>
       <div id="joinError" class="banner-bad small spaced" hidden></div>
     </div>
@@ -60,12 +64,29 @@
     <div id="cancelBanner" class="banner-warn spaced" hidden></div>
   </div>
 
+  <div id="connBanner" class="conn-banner bad" hidden>Verbindung verloren – versuche zu reconnecten ...</div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
-    const socket = io();
+    const socket = io({ reconnection: true, reconnectionDelay: 500, reconnectionAttempts: Infinity });
     let currentTimer = null;
     let answered = false;
+    let currentDeadline = 0;
+    let currentTimeLimit = 0;
+
+    const AVATARS = ['🐱','🐶','🦊','🐼','🐯','🦁','🐸','🐵','🐲','🦄','🐝','🐙','🦀','🦋','🌟','⚡','🔥','🚀','🍀','🎯','🎮','🎨','🎵','💡'];
+    const STORAGE_KEY = 'quiz-player-session';
+
+    function readSession() {
+      try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || 'null'); } catch (_) { return null; }
+    }
+    function writeSession(data) {
+      try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+    }
+    function clearSession() {
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    }
 
     function show(id) {
       ['joinCard', 'lobbyCard', 'questionCard', 'reviewCard', 'endCard'].forEach((x) => {
@@ -73,8 +94,44 @@
       });
     }
 
+    function setConnBanner(state) {
+      const b = $('connBanner');
+      if (state === 'lost') {
+        b.className = 'conn-banner bad';
+        b.textContent = 'Verbindung verloren – versuche zu reconnecten ...';
+        b.hidden = false;
+      } else if (state === 'reconnected') {
+        b.className = 'conn-banner good';
+        b.textContent = '✓ Wieder verbunden';
+        b.hidden = false;
+        setTimeout(() => { b.hidden = true; }, 1500);
+      } else {
+        b.hidden = true;
+      }
+    }
+
     const urlPin = new URLSearchParams(location.search).get('pin');
     if (urlPin) $('pin').value = urlPin;
+
+    function renderAvatars(selected) {
+      const grid = $('avatarGrid');
+      grid.innerHTML = '';
+      AVATARS.forEach((emoji) => {
+        const lab = document.createElement('label');
+        lab.className = 'avatar-tile';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'avatar';
+        input.value = emoji;
+        if (emoji === selected) input.checked = true;
+        const span = document.createElement('span');
+        span.textContent = emoji;
+        lab.appendChild(input);
+        lab.appendChild(span);
+        grid.appendChild(lab);
+      });
+    }
+    renderAvatars(AVATARS[Math.floor(Math.random() * AVATARS.length)]);
 
     function applyBrand(theme, logo) {
       document.documentElement.dataset.theme = theme || 'default';
@@ -86,26 +143,47 @@
       }
     }
 
+    function showError(msg) {
+      $('joinError').textContent = msg;
+      $('joinError').hidden = false;
+    }
+
     $('joinBtn').onclick = () => {
       const pin = $('pin').value.trim();
       const name = $('name').value.trim();
+      const avatarInput = document.querySelector('input[name="avatar"]:checked');
+      const avatar = avatarInput ? avatarInput.value : null;
       if (!pin || !name) {
         showError('Bitte PIN und Name eingeben');
         return;
       }
-      socket.emit('player:join', { pin, name }, (resp) => {
+      socket.emit('player:join', { pin, name, avatar }, (resp) => {
         if (resp && resp.error) return showError(resp.error);
-        $('meName').textContent = resp.name;
+        $('meName').textContent = (resp.avatar || '') + ' ' + resp.name;
         applyBrand(resp.theme, resp.logo);
+        writeSession({ pin: resp.pin, token: resp.token });
         show('lobbyCard');
       });
     };
     $('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
 
-    function showError(msg) {
-      $('joinError').textContent = msg;
-      $('joinError').hidden = false;
-    }
+    socket.on('connect', () => {
+      // Try reconnect with stored session on every (re)connect.
+      const sess = readSession();
+      if (sess && sess.pin && sess.token) {
+        socket.emit('player:join', { pin: sess.pin, token: sess.token }, (resp) => {
+          if (resp && resp.ok) {
+            $('meName').textContent = (resp.avatar || '') + ' ' + resp.name;
+            applyBrand(resp.theme, resp.logo);
+            if (resp.reconnected) setConnBanner('reconnected');
+            if ($('joinCard').hidden === false) show('lobbyCard');
+          } else if (resp && resp.error) {
+            // Stale session — drop it.
+            clearSession();
+          }
+        });
+      }
+    });
 
     socket.on('lobby:update', (data) => {
       if (data.quizName) $('lobbyQuiz').textContent = 'Quiz: ' + data.quizName;
@@ -115,7 +193,8 @@
       data.players.forEach((p) => {
         const span = document.createElement('span');
         span.className = 'player-pill';
-        span.textContent = p.name;
+        if (!p.connected) span.style.opacity = '0.5';
+        span.innerHTML = (p.avatar ? '<span class="avatar">' + p.avatar + '</span>' : '') + escapeHtml(p.name);
         list.appendChild(span);
       });
     });
@@ -123,8 +202,10 @@
     socket.on('question:start', (data) => {
       answered = false;
       show('questionCard');
-      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' / ' + data.total + (data.type === 'text' ? ' · Freitext' : '');
-      $('qText').textContent = data.text;
+      const typeLabel = data.type === 'text' ? ' · Freitext' : data.type === 'slider' ? ' · Schätzung' : '';
+      $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' / ' + data.total + typeLabel;
+      if (window.setMarkdown) window.setMarkdown($('qText'), data.text);
+      else $('qText').textContent = data.text;
       if (data.image) {
         $('qImage').src = data.image;
         $('qImage').hidden = false;
@@ -148,6 +229,27 @@
         const submit = () => sendTextAnswer(input.value);
         submitBtn.onclick = submit;
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+      } else if (data.type === 'slider') {
+        ans.className = '';
+        const min = Number(data.min) || 0;
+        const max = Number(data.max) || 100;
+        const step = Number(data.step) || 1;
+        const unit = data.unit || '';
+        const startVal = Math.round((min + max) / 2);
+        const wrap = document.createElement('div');
+        wrap.className = 'slider-wrap';
+        wrap.innerHTML =
+          '<div class="slider-value" id="sliderValue">' + startVal + (unit ? '<span class="unit">' + escapeHtml(unit) + '</span>' : '') + '</div>' +
+          '<input class="slider-input" id="sliderInput" type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + startVal + '" />' +
+          '<div class="slider-range"><span>' + min + (unit ? ' ' + escapeHtml(unit) : '') + '</span><span>' + max + (unit ? ' ' + escapeHtml(unit) : '') + '</span></div>' +
+          '<button id="submitSliderBtn" style="width:100%;margin-top:.5rem">Antwort absenden</button>';
+        ans.appendChild(wrap);
+        const input = document.getElementById('sliderInput');
+        const valueEl = document.getElementById('sliderValue');
+        input.addEventListener('input', () => {
+          valueEl.innerHTML = input.value + (unit ? '<span class="unit">' + escapeHtml(unit) + '</span>' : '');
+        });
+        document.getElementById('submitSliderBtn').onclick = () => sendSliderAnswer(Number(input.value));
       } else {
         ans.className = 'answer-grid' + (data.answers.length <= 2 ? ' cols-1' : '');
         data.answers.forEach((a, i) => {
@@ -158,7 +260,16 @@
           ans.appendChild(btn);
         });
       }
+      currentDeadline = data.deadline;
+      currentTimeLimit = data.timeLimit;
       runTimer(data.deadline, data.timeLimit);
+    });
+
+    socket.on('answer:locked', () => {
+      answered = true;
+      $('waitMsg').hidden = false;
+      $('waitMsg').textContent = 'Du hast bereits geantwortet – warte auf den Host.';
+      document.querySelectorAll('#qAnswers .answer-btn, #qAnswers input, #qAnswers button').forEach((b) => { b.disabled = true; });
     });
 
     function sendAnswer(idx, btn) {
@@ -205,17 +316,40 @@
       });
     }
 
+    function sendSliderAnswer(val) {
+      if (answered) return;
+      answered = true;
+      const inp = document.getElementById('sliderInput');
+      const btn = document.getElementById('submitSliderBtn');
+      if (inp) inp.disabled = true;
+      if (btn) btn.disabled = true;
+      $('waitMsg').hidden = false;
+      $('waitMsg').textContent = 'Geschätzt: ' + val + ' – warte auf die anderen ...';
+      socket.emit('player:answer', { value: val }, (resp) => {
+        if (resp && resp.error) {
+          answered = false;
+          if (inp) inp.disabled = false;
+          if (btn) btn.disabled = false;
+          $('waitMsg').hidden = true;
+          alert(resp.error);
+        }
+      });
+    }
+
     socket.on('question:result', (data) => {
       show('reviewCard');
       const banner = $('resultBanner');
       if (data.correct) {
         banner.className = 'banner-good';
         banner.textContent = '✅ Richtig! +' + data.gained + ' Punkte';
+        if (window.confetti) window.confetti();
       } else {
         banner.className = 'banner-bad';
         let html = '❌ Leider falsch';
         if (data.type === 'text' && Array.isArray(data.acceptedAnswers) && data.acceptedAnswers.length) {
-          html += '<div class="small spaced" style="opacity:.85">Korrekt wäre: ' + data.acceptedAnswers.map((a) => '<strong>' + a.replace(/[<>&]/g, '') + '</strong>').join(' / ') + '</div>';
+          html += '<div class="small spaced" style="opacity:.85">Korrekt wäre: ' + data.acceptedAnswers.map((a) => '<strong>' + escapeHtml(a) + '</strong>').join(' / ') + '</div>';
+        } else if (data.type === 'slider' && data.correctValue !== null && data.correctValue !== undefined) {
+          html += '<div class="small spaced" style="opacity:.85">Korrekt wäre: <strong>' + data.correctValue + (data.sliderUnit ? ' ' + escapeHtml(data.sliderUnit) : '') + '</strong></div>';
         }
         banner.innerHTML = html;
       }
@@ -224,12 +358,15 @@
 
     socket.on('game:end', (data) => {
       show('endCard');
+      clearSession();
       const table = $('finalBoard');
       table.innerHTML = '<thead><tr><th>#</th><th>Spieler</th><th class="score">Punkte</th></tr></thead>';
       const tbody = document.createElement('tbody');
       data.leaderboard.forEach((p, i) => {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td class="rank">' + (i + 1) + '</td><td>' + escapeHtml(p.name) + '</td><td class="score">' + p.score + '</td>';
+        tr.innerHTML = '<td class="rank">' + (i + 1) + '</td><td>' +
+          (p.avatar ? p.avatar + ' ' : '') + escapeHtml(p.name) +
+          '</td><td class="score">' + p.score + '</td>';
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
@@ -238,11 +375,11 @@
     socket.on('game:cancelled', (data) => {
       $('cancelBanner').textContent = data.reason || 'Spiel beendet';
       $('cancelBanner').hidden = false;
+      clearSession();
     });
 
     socket.on('disconnect', () => {
-      $('cancelBanner').textContent = 'Verbindung verloren. Bitte Seite neu laden.';
-      $('cancelBanner').hidden = false;
+      setConnBanner('lost');
     });
 
     function runTimer(deadline, total) {
