@@ -12,15 +12,17 @@
 </head>
 <body>
   <div class="container">
-    <div class="card flex-between">
-      <div>
-        <h1 id="title">Quiz</h1>
-        <p class="muted small" id="subtitle"></p>
-      </div>
-      <div class="row" style="flex:0 0 auto;gap:.4rem">
-        <a class="btn" id="testBtn" href="#" hidden>▶ Testen</a>
-        <a class="btn secondary" id="resultsBtn" href="#" hidden>📊 Ergebnisse</a>
-        <a class="btn secondary" href="/dashboard.html">Zurück</a>
+    <div class="card">
+      <div class="list-item" style="padding:0;border-bottom:none">
+        <div class="list-item-info">
+          <h1 id="title">Quiz</h1>
+          <p class="muted small" id="subtitle"></p>
+        </div>
+        <div class="list-item-actions">
+          <a class="btn" id="testBtn" href="#" hidden>▶ Testen</a>
+          <a class="btn secondary" id="resultsBtn" href="#" hidden>📊 Ergebnisse</a>
+          <a class="btn secondary" href="/dashboard.html">Zurück</a>
+        </div>
       </div>
     </div>
 
@@ -180,7 +182,6 @@
 
       <label for="qTime" class="spaced">Zeitlimit (Sekunden)</label>
       <input id="qTime" type="number" value="20" min="5" max="120" />
-      <p class="muted small" id="timeHint" hidden style="margin-top:.2rem">⏱ Freitext-Fragen erhalten beim Spielen automatisch das Dreifache dieser Zeit (Spieler tippen die Antwort).</p>
 
       <div class="row spaced">
         <button id="saveQBtn">Frage speichern</button>
@@ -440,7 +441,6 @@
       const isText = currentType() === 'text';
       $('mcForm').hidden = isText;
       $('textForm').hidden = !isText;
-      $('timeHint').hidden = !isText;
     }
 
     document.querySelectorAll('input[name="qType"]').forEach((el) => {
@@ -473,7 +473,8 @@
       // Test button (owner only, and only if there are questions)
       const canTest = quiz.isOwner && quiz.totalCount > 0;
       if (canTest) {
-        $('testBtn').href = '/test.html?quiz=' + encodeURIComponent(quizId);
+        const t = encodeURIComponent(quiz.theme || 'default');
+        $('testBtn').href = '/test.html?quiz=' + encodeURIComponent(quizId) + '&theme=' + t;
         $('testBtn').hidden = false;
       } else {
         $('testBtn').hidden = true;
@@ -610,7 +611,7 @@
         const typeBadge = isText
           ? ' <span class="badge badge-member">Freitext</span>'
           : '';
-        const playedTime = isText ? (q.timeLimit * 3) + 's gespielt' : q.timeLimit + 's';
+        const playedTime = q.timeLimit + 's';
         const header = document.createElement('div');
         header.style.display = 'flex';
         header.style.flexWrap = 'wrap';

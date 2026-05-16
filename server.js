@@ -34,7 +34,6 @@ const LOGO_MAX_BYTES = 8 * 1024 * 1024;
 const QIMG_MAX_W = 1200;
 const QIMG_MAX_H = 800;
 const QUIZ_THEMES = ['default', 'sunset', 'ocean', 'forest', 'candy', 'mono'];
-const TEXT_TIME_MULTIPLIER = 3;
 const TEXT_LEVENSHTEIN_MAX = 2;
 const TEXT_ANSWER_MAX_LEN = 200;
 const POINTS_BASE = 1000;
@@ -845,7 +844,7 @@ function isTextAnswerCorrect(input, acceptedList) {
 }
 
 function effectiveTimeLimit(q) {
-  return q.type === 'text' ? q.timeLimit * TEXT_TIME_MULTIPLIER : q.timeLimit;
+  return q.timeLimit;
 }
 
 function getQuizForAccess(req, role) {

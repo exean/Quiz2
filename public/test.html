@@ -8,6 +8,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script>
+    // Apply theme synchronously before paint so the question screen
+    // already shows the right colours.
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      if (t && /^[a-z]+$/.test(t)) document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <script src="/bg.js" defer></script>
 </head>
 <body>
@@ -69,7 +77,6 @@
     $('backBtn').href = backUrl;
     $('endBackBtn').href = backUrl;
 
-    const TEXT_TIME_MULTIPLIER = 3;
     const TEXT_LEVENSHTEIN_MAX = 2;
     const POINTS_BASE = 1000;
 
@@ -123,7 +130,7 @@
     }
 
     function effectiveTimeLimit(q) {
-      return q.type === 'text' ? q.timeLimit * TEXT_TIME_MULTIPLIER : q.timeLimit;
+      return q.timeLimit;
     }
 
     function shuffle(arr) {
