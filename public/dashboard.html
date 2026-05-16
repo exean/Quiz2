@@ -116,6 +116,7 @@
         const deleteBtn = q.role === 'owner'
           ? '<button class="danger" data-del="' + q.id + '">Löschen</button>'
           : '<button class="secondary" data-leave="' + q.id + '">Verlassen</button>';
+        const duplicateBtn = '<button class="secondary" data-dup="' + q.id + '" title="Quiz duplizieren">⎘ Duplizieren</button>';
         div.innerHTML =
           '<div class="list-item-info">' +
             '<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.2rem">' +
@@ -127,6 +128,7 @@
           '<div class="list-item-actions">' +
             playBtn +
             '<a class="btn secondary" href="/quiz-edit.html?id=' + encodeURIComponent(q.id) + '">' + (q.role === 'owner' ? 'Bearbeiten' : 'Öffnen') + '</a>' +
+            duplicateBtn +
             deleteBtn +
           '</div>';
         target.appendChild(div);
@@ -136,6 +138,14 @@
           if (!confirm('Quiz wirklich löschen?')) return;
           await api('/api/quizzes/' + encodeURIComponent(b.dataset.del), { method: 'DELETE' });
           loadQuizzes();
+        };
+      });
+      target.querySelectorAll('button[data-dup]').forEach((b) => {
+        b.onclick = async () => {
+          try {
+            const r = await api('/api/quizzes/' + encodeURIComponent(b.dataset.dup) + '/duplicate', { method: 'POST', body: JSON.stringify({}) });
+            location.href = '/quiz-edit.html?id=' + encodeURIComponent(r.id);
+          } catch (err) { alert(err.message); }
         };
       });
       target.querySelectorAll('button[data-leave]').forEach((b) => {

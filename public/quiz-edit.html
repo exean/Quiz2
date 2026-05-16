@@ -54,6 +54,18 @@
       <h3 class="spaced">Theme</h3>
       <div class="theme-swatches" id="themeSwatches"></div>
       <div id="themeMsg" class="small spaced"></div>
+
+      <h3 class="spaced">Spiel-Einstellungen</h3>
+      <div class="flex-between" style="margin-top:.4rem">
+        <div style="min-width:0">
+          <strong style="font-weight:500">Antwortoptionen mischen</strong>
+          <p class="muted small" style="margin:.1rem 0 0">Bei Multiple-Choice-Fragen sehen Spieler die Antworten in zufälliger Reihenfolge.</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="shuffleToggle" />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="card" id="collabCard" hidden>
@@ -496,6 +508,7 @@
         renderMembers(quiz.members);
         renderThemeSwatches(quiz.theme);
         renderLogo(quiz.logo);
+        $('shuffleToggle').checked = quiz.shuffleAnswers !== false;
 
         // Collaboration toggle (local UI state, persisted per-quiz in localStorage)
         const hasMembers = quiz.members.members.length > 0 || quiz.members.pendingEmails.length > 0;
@@ -606,6 +619,18 @@
         header.innerHTML = '<strong>' + (idx + 1) + '. ' + escapeHtml(q.text) + '</strong> <span class="muted small">(' + playedTime + ')</span>' + typeBadge + ' <span class="badge badge-author">' + escapeHtml(authorLabel(quiz, q.authorId)) + '</span>';
         info.appendChild(header);
 
+        if (q.image && !q.redacted) {
+          const img = document.createElement('img');
+          img.src = q.image;
+          img.alt = '';
+          img.style.maxWidth = '260px';
+          img.style.maxHeight = '160px';
+          img.style.borderRadius = '10px';
+          img.style.margin = '.5rem 0';
+          img.style.display = 'block';
+          info.appendChild(img);
+        }
+
         if (q.redacted) {
           const note = document.createElement('div');
           note.className = 'question-redacted';
@@ -638,6 +663,47 @@
         btns.className = 'list-item-actions';
         const canEdit = !q.redacted && (quiz.isOwner || quiz.mode === 'open' || q.authorId === currentMe);
         if (canEdit) {
+          const imgLabel = document.createElement('label');
+          imgLabel.className = 'btn secondary';
+          imgLabel.style.cursor = 'pointer';
+          imgLabel.textContent = q.image ? '🖼 Bild' : '+ Bild';
+          const imgInput = document.createElement('input');
+          imgInput.type = 'file';
+          imgInput.accept = 'image/*';
+          imgInput.style.display = 'none';
+          imgInput.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            e.target.value = '';
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('image', file);
+            try {
+              const res = await fetch('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(q.id) + '/image', {
+                method: 'POST', credentials: 'include', body: fd,
+              });
+              if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || ('HTTP ' + res.status));
+              }
+              load();
+            } catch (err) { alert(err.message); }
+          });
+          imgLabel.appendChild(imgInput);
+          btns.appendChild(imgLabel);
+
+          if (q.image) {
+            const removeImg = document.createElement('button');
+            removeImg.textContent = '✕ Bild';
+            removeImg.className = 'secondary';
+            removeImg.onclick = async () => {
+              if (!confirm('Bild entfernen?')) return;
+              try {
+                await api('/api/quizzes/' + encodeURIComponent(quizId) + '/questions/' + encodeURIComponent(q.id) + '/image', { method: 'DELETE' });
+                load();
+              } catch (err) { alert(err.message); }
+            };
+            btns.appendChild(removeImg);
+          }
           const edit = document.createElement('button');
           edit.textContent = 'Bearbeiten';
           edit.className = 'secondary';
@@ -743,6 +809,22 @@
         msg.textContent = err.message;
       } finally {
         e.target.value = '';
+      }
+    });
+
+    $('shuffleToggle').addEventListener('change', async () => {
+      const msg = $('themeMsg');
+      msg.textContent = '';
+      try {
+        await api('/api/quizzes/' + encodeURIComponent(quizId), {
+          method: 'PATCH',
+          body: JSON.stringify({ shuffleAnswers: $('shuffleToggle').checked }),
+        });
+        msg.className = 'banner-good small spaced';
+        msg.textContent = 'Einstellung gespeichert.';
+      } catch (err) {
+        msg.className = 'banner-bad small spaced';
+        msg.textContent = err.message;
       }
     });
 

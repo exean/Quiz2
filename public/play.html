@@ -38,6 +38,7 @@
         <span class="muted small" id="qTimer"></span>
       </div>
       <h2 id="qText"></h2>
+      <img id="qImage" class="question-image" alt="" hidden />
       <div class="timer-bar"><div id="timerBar" style="width:100%"></div></div>
       <div id="qAnswers" class="answer-grid"></div>
       <div id="waitMsg" class="banner-warn spaced small" hidden>Antwort abgeschickt – warte auf die anderen ...</div>
@@ -124,6 +125,13 @@
       show('questionCard');
       $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' / ' + data.total + (data.type === 'text' ? ' · Freitext' : '');
       $('qText').textContent = data.text;
+      if (data.image) {
+        $('qImage').src = data.image;
+        $('qImage').hidden = false;
+      } else {
+        $('qImage').hidden = true;
+        $('qImage').removeAttribute('src');
+      }
       $('waitMsg').hidden = true;
       const ans = $('qAnswers');
       ans.innerHTML = '';

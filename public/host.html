@@ -46,6 +46,7 @@
         <span class="muted small" id="progress"></span>
       </div>
       <h2 id="qText"></h2>
+      <img id="qImage" class="question-image" alt="" hidden />
       <div class="timer-bar"><div id="timerBar" style="width:100%"></div></div>
       <div id="qAnswers" class="answer-grid"></div>
     </div>
@@ -145,6 +146,13 @@
       $('qIndex').textContent = 'Frage ' + (data.index + 1) + ' von ' + data.total + (data.type === 'text' ? ' · Freitext' : '');
       $('progress').textContent = '0 / ' + ($('playerList').children.length || 0) + ' geantwortet';
       $('qText').textContent = data.text;
+      if (data.image) {
+        $('qImage').src = data.image;
+        $('qImage').hidden = false;
+      } else {
+        $('qImage').hidden = true;
+        $('qImage').removeAttribute('src');
+      }
       const ans = $('qAnswers');
       ans.innerHTML = '';
       if (data.type === 'text') {
@@ -164,6 +172,7 @@
           ans.appendChild(btn);
         });
       }
+      window.__currentAnswers = data.answers || null;
       runTimer(data.deadline, data.timeLimit);
     });
 

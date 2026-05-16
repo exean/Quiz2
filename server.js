@@ -31,6 +31,8 @@ const RESULTS_FILE = path.join(DATA_DIR, 'results.json');
 const TOKEN_PREFIX = 'qzt_';
 const LOGO_MAX_DIM = 512;
 const LOGO_MAX_BYTES = 8 * 1024 * 1024;
+const QIMG_MAX_W = 1200;
+const QIMG_MAX_H = 800;
 const QUIZ_THEMES = ['default', 'sunset', 'ocean', 'forest', 'candy', 'mono'];
 const TEXT_TIME_MULTIPLIER = 3;
 const TEXT_LEVENSHTEIN_MAX = 2;
@@ -38,6 +40,7 @@ const TEXT_ANSWER_MAX_LEN = 200;
 const POINTS_BASE = 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+const RESET_TTL_MS = 60 * 60 * 1000;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const RP_NAME = process.env.RP_NAME || 'Quiz';
 
@@ -231,6 +234,27 @@ async function sendVerifyMail(email, link) {
   });
 }
 
+async function sendResetMail(email, link) {
+  if (!mailer) {
+    // eslint-disable-next-line no-console
+    console.log('[mail] SMTP nicht konfiguriert. Reset-Link für ' + email + ':\n  ' + link);
+    return;
+  }
+  await mailer.sendMail({
+    from: mailFrom,
+    to: email,
+    subject: 'Quiz: Passwort zurücksetzen',
+    text: 'Du hast eine Passwortrücksetzung angefordert. Folge dem Link um ein neues Passwort zu setzen:\n\n' + link + '\n\nLink ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese Mail.',
+    html: '<p>Du hast eine Passwortrücksetzung angefordert.</p><p><a href="' + link + '">' + link + '</a></p><p>Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese Mail.</p>',
+  });
+}
+
+function invalidateSessionsForUser(userId) {
+  for (const [sid, s] of sessions.entries()) {
+    if (s.userId === userId) sessions.delete(sid);
+  }
+}
+
 function baseUrl(req) {
   const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
   const host = req.get('x-forwarded-host') || req.get('host');
@@ -304,6 +328,41 @@ app.post('/api/auth/resend', async (req, res) => {
   const link = baseUrl(req) + '/api/auth/verify?token=' + encodeURIComponent(verifyToken);
   try { await sendVerifyMail(email, link); } catch (err) { /* eslint-disable-next-line no-console */ console.error(err); }
   res.json({ ok: true, devLink: mailer ? undefined : link });
+});
+
+app.post('/api/auth/forgot', async (req, res) => {
+  const email = normaliseEmail(req.body && req.body.email);
+  if (!isValidEmail(email)) return res.json({ ok: true }); // do not leak which emails are unknown
+  const users = loadUsers();
+  const idx = users.findIndex((u) => u.email === email);
+  if (idx >= 0 && users[idx].verified) {
+    const token = crypto.randomBytes(24).toString('base64url');
+    users[idx] = { ...users[idx], resetToken: token, resetExpires: Date.now() + RESET_TTL_MS };
+    saveUsers(users);
+    const link = baseUrl(req) + '/reset-password.html?token=' + encodeURIComponent(token);
+    try { await sendResetMail(email, link); } catch (err) { /* eslint-disable-next-line no-console */ console.error(err); }
+    return res.json({ ok: true, devLink: mailer ? undefined : link });
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/reset', async (req, res) => {
+  const token = String((req.body && req.body.token) || '');
+  const password = String((req.body && req.body.password) || '');
+  if (!token) return res.status(400).json({ error: 'Token fehlt' });
+  if (password.length < 8) return res.status(400).json({ error: 'Passwort muss mindestens 8 Zeichen lang sein' });
+  const users = loadUsers();
+  const idx = users.findIndex((u) => u.resetToken === token);
+  if (idx < 0) return res.status(400).json({ error: 'Link ungültig' });
+  const user = users[idx];
+  if (!user.resetExpires || user.resetExpires < Date.now()) {
+    return res.status(400).json({ error: 'Link abgelaufen' });
+  }
+  const passwordHash = await bcrypt.hash(password, 10);
+  users[idx] = { ...user, passwordHash, resetToken: null, resetExpires: null };
+  saveUsers(users);
+  invalidateSessionsForUser(user.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -572,6 +631,7 @@ function normaliseQuiz(quiz) {
     hostMode: HOST_MODES.includes(quiz.hostMode) ? quiz.hostMode : 'owner',
     theme: QUIZ_THEMES.includes(quiz.theme) ? quiz.theme : 'default',
     logo: quiz.logo || null,
+    shuffleAnswers: quiz.shuffleAnswers !== false,
     memberIds: Array.isArray(quiz.memberIds) ? quiz.memberIds.filter(Boolean) : [],
     pendingEmails: Array.isArray(quiz.pendingEmails) ? quiz.pendingEmails.filter(Boolean) : [],
     questions: (quiz.questions || []).map((q) => normaliseQuestion(q, quiz.userId)),
@@ -688,6 +748,7 @@ function quizListEntry(quiz, userId) {
     hostMode: quiz.hostMode,
     theme: quiz.theme,
     logo: logoUrl(quiz),
+    shuffleAnswers: quiz.shuffleAnswers,
     canHost: canHost(quiz, userId),
     totalQuestions: all.length,
     ownQuestions: own,
@@ -707,6 +768,7 @@ function normaliseQuestion(q, fallbackUserId) {
     type: questionType(q),
     text: q.text,
     timeLimit: q.timeLimit,
+    image: q.image || null,
   };
   if (base.type === 'text') {
     base.acceptedAnswers = Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers.slice() : [];
@@ -715,6 +777,10 @@ function normaliseQuestion(q, fallbackUserId) {
     base.correctIndex = q.correctIndex;
   }
   return base;
+}
+
+function questionImageUrl(q) {
+  return q && q.image ? '/uploads/' + q.image : null;
 }
 
 function validateQuestion(q) {
@@ -835,6 +901,7 @@ app.get('/api/quizzes/:id', authMiddleware, (req, res) => {
     hostMode: quiz.hostMode,
     theme: quiz.theme,
     logo: logoUrl(quiz),
+    shuffleAnswers: quiz.shuffleAnswers,
     role,
     canHost: canHost(quiz, req.user.id),
     isOwner: role === 'owner',
@@ -871,6 +938,9 @@ app.patch('/api/quizzes/:id', authMiddleware, (req, res) => {
     if (!QUIZ_THEMES.includes(req.body.theme)) return res.status(400).json({ error: 'Unbekanntes Theme' });
     quiz.theme = req.body.theme;
   }
+  if (typeof req.body.shuffleAnswers === 'boolean') {
+    quiz.shuffleAnswers = req.body.shuffleAnswers;
+  }
   quiz.updatedAt = new Date().toISOString();
   saveQuizzes(list);
   res.json({ ok: true });
@@ -885,6 +955,11 @@ app.delete('/api/quizzes/:id', authMiddleware, (req, res) => {
   saveQuizzes(list);
   if (removed.logo) {
     try { fs.unlinkSync(path.join(UPLOADS_DIR, removed.logo)); } catch (_) { /* ignore */ }
+  }
+  for (const q of removed.questions || []) {
+    if (q && q.image) {
+      try { fs.unlinkSync(path.join(UPLOADS_DIR, q.image)); } catch (_) { /* ignore */ }
+    }
   }
   // Drop any saved results for this quiz
   const results = loadResults();
@@ -935,6 +1010,56 @@ app.delete('/api/quizzes/:id/results/:rid', authMiddleware, (req, res) => {
   list.splice(idx, 1);
   saveResultsList(list);
   res.json({ ok: true });
+});
+
+app.post('/api/quizzes/:id/duplicate', authMiddleware, (req, res) => {
+  const list = loadQuizzes();
+  const src = list.find((q) => q.id === req.params.id);
+  if (!src || !getQuizRole(src, req.user.id)) return res.status(404).json({ error: 'Quiz nicht gefunden' });
+  const baseName = String((req.body && req.body.name) || ('Kopie von ' + src.name)).trim().slice(0, 80) || src.name;
+  const now = new Date().toISOString();
+  const copy = {
+    id: newId(),
+    userId: req.user.id,
+    name: baseName,
+    description: src.description,
+    mode: src.mode,
+    hostMode: src.hostMode,
+    theme: src.theme,
+    shuffleAnswers: src.shuffleAnswers,
+    logo: null,
+    memberIds: [],
+    pendingEmails: [],
+    questions: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  // copy logo file under a fresh filename
+  if (src.logo) {
+    try {
+      const ext = path.extname(src.logo) || '.png';
+      const dest = copy.id + '-' + Date.now().toString(36) + ext;
+      fs.copyFileSync(path.join(UPLOADS_DIR, src.logo), path.join(UPLOADS_DIR, dest));
+      copy.logo = dest;
+    } catch (_) { /* ignore */ }
+  }
+  // copy questions with fresh ids; reassign authorship to current user
+  copy.questions = (src.questions || []).map((q) => {
+    const fresh = { ...q, id: newId(), authorId: req.user.id, image: null };
+    if (q.image) {
+      try {
+        const ext = path.extname(q.image) || '.png';
+        const dest = 'q-' + copy.id + '-' + fresh.id + '-' + Date.now().toString(36) + ext;
+        fs.copyFileSync(path.join(UPLOADS_DIR, q.image), path.join(UPLOADS_DIR, dest));
+        fresh.image = dest;
+      } catch (_) { /* ignore */ }
+    }
+    return fresh;
+  });
+  const raw = load(QUIZZES_FILE, []);
+  raw.push(copy);
+  saveQuizzes(raw);
+  res.json(quizListEntry(normaliseQuiz(copy), req.user.id));
 });
 
 /* logo upload */
@@ -1127,9 +1252,60 @@ app.delete('/api/quizzes/:id/questions/:qid', authMiddleware, (req, res) => {
   if (!canEditQuestion(quiz, current, req.user.id)) {
     return res.status(403).json({ error: 'Du darfst diese Frage nicht löschen' });
   }
+  if (current.image) {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, current.image)); } catch (_) { /* ignore */ }
+  }
   quiz.questions.splice(idx, 1);
   quiz.updatedAt = new Date().toISOString();
   saveQuizzes(list);
+  res.json({ ok: true });
+});
+
+app.post('/api/quizzes/:id/questions/:qid/image', authMiddleware, upload.single('image'), async (req, res) => {
+  const { quiz, list, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  const q = (quiz.questions || []).find((x) => x.id === req.params.qid);
+  if (!q) return res.status(404).json({ error: 'Frage nicht gefunden' });
+  if (!canEditQuestion(quiz, q, req.user.id)) {
+    return res.status(403).json({ error: 'Keine Berechtigung' });
+  }
+  if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'Kein Bild übermittelt' });
+  try {
+    const meta = await sharp(req.file.buffer).metadata();
+    if (!meta.format) return res.status(400).json({ error: 'Datei ist kein gültiges Bild' });
+    const filename = 'q-' + quiz.id + '-' + q.id + '-' + Date.now().toString(36) + '.png';
+    const filePath = path.join(UPLOADS_DIR, filename);
+    await sharp(req.file.buffer, { failOn: 'none' })
+      .rotate()
+      .resize({ width: QIMG_MAX_W, height: QIMG_MAX_H, fit: 'inside', withoutEnlargement: true })
+      .png({ compressionLevel: 9 })
+      .toFile(filePath);
+    if (q.image && q.image !== filename) {
+      try { fs.unlinkSync(path.join(UPLOADS_DIR, q.image)); } catch (_) { /* ignore */ }
+    }
+    q.image = filename;
+    quiz.updatedAt = new Date().toISOString();
+    saveQuizzes(list);
+    res.json({ ok: true, image: '/uploads/' + filename });
+  } catch (err) {
+    res.status(400).json({ error: 'Bild konnte nicht verarbeitet werden: ' + err.message });
+  }
+});
+
+app.delete('/api/quizzes/:id/questions/:qid/image', authMiddleware, (req, res) => {
+  const { quiz, list, error, status } = getQuizForAccess(req);
+  if (error) return res.status(status).json({ error });
+  const q = (quiz.questions || []).find((x) => x.id === req.params.qid);
+  if (!q) return res.status(404).json({ error: 'Frage nicht gefunden' });
+  if (!canEditQuestion(quiz, q, req.user.id)) {
+    return res.status(403).json({ error: 'Keine Berechtigung' });
+  }
+  if (q.image) {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, q.image)); } catch (_) { /* ignore */ }
+    q.image = null;
+    quiz.updatedAt = new Date().toISOString();
+    saveQuizzes(list);
+  }
   res.json({ ok: true });
 });
 
@@ -1394,6 +1570,7 @@ function buildOpenApiSpec(req) {
             hostMode: { type: 'string', enum: ['owner', 'members'] },
             theme: { type: 'string' },
             logo: { type: 'string', nullable: true },
+            shuffleAnswers: { type: 'boolean' },
             canHost: { type: 'boolean' },
             totalQuestions: { type: 'integer' },
             ownQuestions: { type: 'integer' },
@@ -1570,6 +1747,20 @@ function buildOpenApiSpec(req) {
           responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }) },
         },
       },
+      '/auth/forgot': {
+        post: {
+          tags: ['auth'], summary: 'Passwortrücksetzung anfordern (Reset-Link per Mail)', security: [],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['email'], properties: { email: { type: 'string', format: 'email' } } } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }, 'Immer 200 - keine Auskunft über Existenz') },
+        },
+      },
+      '/auth/reset': {
+        post: {
+          tags: ['auth'], summary: 'Neues Passwort mit Reset-Token setzen', security: [],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['token', 'password'], properties: { token: { type: 'string' }, password: { type: 'string', minLength: 8 } } } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '400': errorResp('Token ungültig oder abgelaufen') },
+        },
+      },
       '/tokens': {
         get: {
           tags: ['tokens'], summary: 'Eigene API-Tokens auflisten',
@@ -1615,6 +1806,7 @@ function buildOpenApiSpec(req) {
               mode: { type: 'string', enum: ['open', 'questions-visible', 'count-only'] },
               hostMode: { type: 'string', enum: ['owner', 'members'] },
               theme: { type: 'string' },
+              shuffleAnswers: { type: 'boolean' },
             },
           } } } },
           responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '403': errorResp('Nur Ersteller') },
@@ -1661,6 +1853,23 @@ function buildOpenApiSpec(req) {
         ],
         delete: { tags: ['members'], summary: 'Mitwirkenden entfernen oder selbst verlassen',
           responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '403': errorResp('Nicht erlaubt') } },
+      },
+      '/quizzes/{id}/duplicate': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        post: { tags: ['quizzes'], summary: 'Quiz inkl. Fragen + Bilder duplizieren (Mitglieder oder Owner). Mitglieder/Logo werden nicht übernommen außer Logo-Datei.',
+          requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string', maxLength: 80 } } } } } },
+          responses: { '200': okJson('QuizSummary', 'Duplikat erstellt') } },
+      },
+      '/quizzes/{id}/questions/{qid}/image': {
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'qid', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        post: { tags: ['questions'], summary: 'Bild zu einer Frage hochladen (multipart, Feld "image")',
+          requestBody: { required: true, content: { 'multipart/form-data': { schema: { type: 'object', required: ['image'], properties: { image: { type: 'string', format: 'binary' } } } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' }, image: { type: 'string' } } }) } },
+        delete: { tags: ['questions'], summary: 'Bild einer Frage entfernen',
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }) } },
       },
       '/quizzes/{id}/logo': {
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
@@ -1739,6 +1948,15 @@ function broadcastLobby(game) {
   });
 }
 
+function randomPermutation(n) {
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function startQuestion(game) {
   const q = game.questions[game.currentIndex];
   if (!q) return finishGame(game);
@@ -1747,12 +1965,24 @@ function startQuestion(game) {
   game.answers = new Map();
   const limit = effectiveTimeLimit(q);
   const deadline = game.questionStart + limit * 1000;
+  let answersOut = null;
+  if (q.type === 'multiple-choice') {
+    if (game.shuffleAnswers) {
+      game.currentPermutation = randomPermutation(q.answers.length);
+    } else {
+      game.currentPermutation = q.answers.map((_, i) => i);
+    }
+    answersOut = game.currentPermutation.map((i) => q.answers[i]);
+  } else {
+    game.currentPermutation = null;
+  }
   io.to(game.pin).emit('question:start', {
     index: game.currentIndex,
     total: game.questions.length,
     type: q.type,
     text: q.text,
-    answers: q.type === 'text' ? null : q.answers,
+    image: questionImageUrl(q),
+    answers: answersOut,
     timeLimit: limit,
     deadline,
   });
@@ -1801,6 +2031,7 @@ function endQuestion(game, reason) {
     index: game.currentIndex,
     type: q.type,
     text: q.text,
+    image: questionImageUrl(q),
     timeLimit: q.timeLimit,
     answers: q.type === 'multiple-choice' ? q.answers.slice() : null,
     correctIndex: q.type === 'multiple-choice' ? q.correctIndex : null,
@@ -1816,12 +2047,23 @@ function endQuestion(game, reason) {
     })),
     endedAt: new Date().toISOString(),
   });
+
+  // For the live emit, re-order counts/answers/correctIndex according to the
+  // permutation the players saw on screen so the histogram matches.
+  let emitAnswers = null, emitCounts = null, emitCorrect = null;
+  if (q.type === 'multiple-choice') {
+    const perm = game.currentPermutation || q.answers.map((_, i) => i);
+    emitAnswers = perm.map((i) => q.answers[i]);
+    emitCounts = perm.map((i) => counts ? counts[i] : 0);
+    emitCorrect = perm.indexOf(q.correctIndex);
+  }
   io.to(game.pin).emit('question:end', {
     reason,
     type: q.type,
-    correctIndex: q.type === 'text' ? null : q.correctIndex,
+    answers: emitAnswers,
+    correctIndex: emitCorrect,
     acceptedAnswers: q.type === 'text' ? q.acceptedAnswers : null,
-    counts,
+    counts: emitCounts,
     perPlayer,
     leaderboard: leaderboard(game),
     hasNext: game.currentIndex + 1 < game.questions.length,
@@ -1833,7 +2075,7 @@ function endQuestion(game, reason) {
       gained: me ? me.gained : 0,
       score: player.score,
       type: q.type,
-      correctIndex: q.type === 'text' ? null : q.correctIndex,
+      correctIndex: emitCorrect,
       acceptedAnswers: q.type === 'text' ? q.acceptedAnswers : null,
     });
   }
@@ -1922,6 +2164,7 @@ io.on('connection', (socket) => {
       quizDescription: quiz.description,
       theme: quiz.theme,
       logo: logoUrl(quiz),
+      shuffleAnswers: quiz.shuffleAnswers !== false,
       questions: shuffled,
       currentIndex: -1,
       state: 'lobby',
@@ -1930,6 +2173,7 @@ io.on('connection', (socket) => {
       questionStart: 0,
       startedAt: null,
       history: [],
+      currentPermutation: null,
     };
     games.set(pin, game);
     socket.join(pin);
@@ -2015,7 +2259,10 @@ io.on('connection', (socket) => {
       if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
         return cb && cb({ error: 'Ungültige Antwort' });
       }
-      game.answers.set(socket.id, { choice, at: Date.now() });
+      // Map displayed choice back to original index via permutation
+      const perm = game.currentPermutation || q.answers.map((_, i) => i);
+      const originalChoice = perm[choice];
+      game.answers.set(socket.id, { choice: originalChoice, at: Date.now() });
     }
 
     cb && cb({ ok: true });

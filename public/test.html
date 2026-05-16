@@ -35,6 +35,7 @@
         <span class="muted small" id="qTimer"></span>
       </div>
       <h2 id="qText"></h2>
+      <img id="qImage" class="question-image" alt="" hidden />
       <div class="timer-bar"><div id="timerBar" style="width:100%"></div></div>
       <div id="qAnswers" class="answer-grid"></div>
     </div>
@@ -200,6 +201,13 @@
       show('questionCard');
       $('qIndex').textContent = 'Frage ' + (idx + 1) + ' / ' + order.length + (q.type === 'text' ? ' · Freitext' : '');
       $('qText').textContent = q.text;
+      if (q.image) {
+        $('qImage').src = q.image;
+        $('qImage').hidden = false;
+      } else {
+        $('qImage').hidden = true;
+        $('qImage').removeAttribute('src');
+      }
       const ans = $('qAnswers');
       ans.innerHTML = '';
       if (q.type === 'text') {
@@ -223,11 +231,23 @@
         setTimeout(() => input.focus(), 50);
       } else {
         ans.className = 'answer-grid' + (q.answers.length <= 2 ? ' cols-1' : '');
-        q.answers.forEach((a, i) => {
+        const shuffle = quiz && quiz.shuffleAnswers !== false;
+        const perm = shuffle
+          ? (function permute(n) {
+              const arr = Array.from({ length: n }, (_, k) => k);
+              for (let k = n - 1; k > 0; k--) {
+                const j = Math.floor(Math.random() * (k + 1));
+                [arr[k], arr[j]] = [arr[j], arr[k]];
+              }
+              return arr;
+            })(q.answers.length)
+          : q.answers.map((_, k) => k);
+        q.__perm = perm;
+        perm.forEach((origIdx, displayIdx) => {
           const btn = document.createElement('button');
-          btn.className = 'answer-btn c' + i;
-          btn.textContent = String.fromCharCode(65 + i) + ' · ' + a;
-          btn.onclick = () => submit(i, btn);
+          btn.className = 'answer-btn c' + displayIdx;
+          btn.textContent = String.fromCharCode(65 + displayIdx) + ' · ' + q.answers[origIdx];
+          btn.onclick = () => submit(origIdx, btn);
           ans.appendChild(btn);
         });
       }
@@ -260,9 +280,12 @@
 
       // Highlight selection for MC
       if (q.type !== 'text' && typeof value === 'number') {
+        const perm = q.__perm || q.answers.map((_, k) => k);
+        const chosenDisplay = perm.indexOf(value);
+        const correctDisplay = perm.indexOf(q.correctIndex);
         document.querySelectorAll('#qAnswers .answer-btn').forEach((b, i) => {
           b.disabled = true;
-          if (i !== value && i !== q.correctIndex) b.classList.add('dim');
+          if (i !== chosenDisplay && i !== correctDisplay) b.classList.add('dim');
         });
         if (btn) btn.classList.add('selected');
       }
