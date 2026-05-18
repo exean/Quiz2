@@ -74,13 +74,18 @@
 
       <div class="card">
         <h2>📨 Test-Versand</h2>
-        <p class="muted small">Schicke eine Test-Mail um die SMTP-Einstellungen zu prüfen.</p>
+        <p class="muted small">Schicke eine Test-Mail um die SMTP-Einstellungen zu prüfen. Geprüft wird zuerst die Verbindung+Auth, dann die tatsächliche Annahme durch den Server.</p>
         <label for="testTo">An (E-Mail)</label>
         <input id="testTo" type="email" />
+        <p class="muted small" id="fromHint" style="margin-top:.3rem"></p>
         <div class="row spaced">
           <button id="testBtn">Test-Mail senden</button>
         </div>
         <div id="testMsg" class="small spaced"></div>
+        <details id="testDetails" hidden style="margin-top:.6rem">
+          <summary style="cursor:pointer" class="muted small">SMTP-Konversation anzeigen</summary>
+          <pre id="testLog" style="background:rgba(0,0,0,.35);padding:.7rem;border-radius:8px;overflow-x:auto;font-size:.78rem;max-height:300px"></pre>
+        </details>
       </div>
     </div>
   </div>
@@ -108,8 +113,26 @@
 
     function setMsg(el, text, kind) {
       el.className = (kind === 'good' ? 'banner-good' : 'banner-bad') + ' small spaced';
+      el.style.whiteSpace = 'pre-wrap';
       el.textContent = text;
     }
+
+    function updateFromHint() {
+      const from = $('from').value;
+      const hint = $('fromHint');
+      const m = from.match(/<([^>]+)>/);
+      const fromAddr = (m ? m[1] : from).trim();
+      if (!fromAddr) { hint.textContent = ''; return; }
+      const userVal = $('user').value.trim();
+      if (userVal && fromAddr && !fromAddr.toLowerCase().endsWith('@' + userVal.split('@').pop().toLowerCase())) {
+        hint.textContent = '⚠ From-Adresse (' + fromAddr + ') passt nicht zur Domain des SMTP-Users. Viele Provider lehnen das ab oder leiten in Spam.';
+        hint.style.color = 'var(--warn)';
+      } else {
+        hint.textContent = '';
+      }
+    }
+    $('from').addEventListener('input', updateFromHint);
+    $('user').addEventListener('input', updateFromHint);
 
     async function load() {
       try {
@@ -123,6 +146,7 @@
         if (cfg.hasPass) $('pass').placeholder = 'gespeichert — leer lassen um nicht zu ändern';
         const sources = { 'admin-panel': 'Werte aus Admin-Panel aktiv', 'env': 'Werte aus Env-Variablen aktiv (kein Override gespeichert)', 'none': 'Keine SMTP-Daten konfiguriert' };
         $('sourceInfo').textContent = sources[cfg.source] || '';
+        updateFromHint();
       } catch (err) {
         if (err.message !== 'forbidden' && err.message !== 'unauth') {
           $('forbiddenCard').hidden = false;
@@ -164,16 +188,50 @@
       }
     };
 
+    function renderLog(arr) {
+      if (!arr || !arr.length) { $('testDetails').hidden = true; return; }
+      $('testLog').textContent = arr.map((e) => e.join(' ')).join('\n');
+      $('testDetails').hidden = false;
+    }
+
     $('testBtn').onclick = async () => {
       const msg = $('testMsg');
       msg.textContent = '';
+      $('testDetails').hidden = true;
       const to = $('testTo').value.trim();
       if (!to) return setMsg(msg, 'Bitte Empfänger angeben', 'bad');
+      const btn = $('testBtn');
+      btn.disabled = true;
+      btn.textContent = 'Sende …';
       try {
-        const r = await api('/api/admin/smtp/test', { method: 'POST', body: JSON.stringify({ to }) });
-        setMsg(msg, '✓ Mail an ' + r.to + ' gesendet' + (r.messageId ? ' (id: ' + r.messageId + ')' : ''), 'good');
+        const res = await fetch('/api/admin/smtp/test', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          let txt = body.error || ('HTTP ' + res.status);
+          if (Array.isArray(body.rejected) && body.rejected.length) {
+            txt += '\nAbgelehnt: ' + body.rejected.join(', ');
+          }
+          if (body.response) txt += '\nServer-Antwort: ' + body.response;
+          if (body.code) txt += '\nFehlercode: ' + body.code;
+          setMsg(msg, txt, 'bad');
+          renderLog(body.log);
+          return;
+        }
+        let txt = '✓ Mail an ' + body.to + ' gesendet';
+        if (body.messageId) txt += '\nMessage-ID: ' + body.messageId;
+        if (body.response) txt += '\nServer-Antwort: ' + body.response;
+        if (Array.isArray(body.accepted)) txt += '\nAkzeptiert: ' + body.accepted.join(', ');
+        txt += '\n\nWichtig: kommt nichts an, prüfe Spam-Ordner und ob der From-Header zur erlaubten Absender-Domain deines SMTP-Servers passt.';
+        setMsg(msg, txt, 'good');
       } catch (err) {
         setMsg(msg, err.message, 'bad');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test-Mail senden';
       }
     };
 

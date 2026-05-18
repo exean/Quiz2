@@ -495,17 +495,69 @@ app.post('/api/admin/smtp/test', adminMiddleware, async (req, res) => {
   const to = normaliseEmail((req.body && req.body.to) || req.user.email);
   if (!isValidEmail(to)) return res.status(400).json({ error: 'Ungültige Empfänger-E-Mail' });
   if (!mailer) return res.status(400).json({ error: 'Kein SMTP konfiguriert' });
+  const debugLog = [];
+  // Build a fresh transport with the same settings but with logging captured,
+  // so we can show the SMTP conversation back to the admin.
+  const c = resolvedMailConfig();
+  const logTransport = nodemailer.createTransport({
+    host: c.host, port: c.port, secure: c.secure,
+    auth: c.user ? { user: c.user, pass: c.pass } : undefined,
+    logger: {
+      level: () => {},
+      trace: (...a) => debugLog.push(['trace'].concat(a.map(String))),
+      debug: (...a) => debugLog.push(['debug'].concat(a.map(String))),
+      info:  (...a) => debugLog.push(['info'].concat(a.map(String))),
+      warn:  (...a) => debugLog.push(['warn'].concat(a.map(String))),
+      error: (...a) => debugLog.push(['error'].concat(a.map(String))),
+      fatal: (...a) => debugLog.push(['fatal'].concat(a.map(String))),
+    },
+  });
   try {
-    const info = await mailer.sendMail({
+    // Connection + auth check first; surfaces wrong host/port/credentials clearly.
+    await logTransport.verify();
+  } catch (err) {
+    return res.status(400).json({
+      error: 'SMTP-Verbindung fehlgeschlagen: ' + err.message,
+      code: err.code || null,
+      log: debugLog.slice(-30),
+    });
+  }
+  try {
+    const info = await logTransport.sendMail({
       from: mailFrom,
       to,
       subject: 'Quiz · SMTP-Test',
       text: 'Wenn du diese Mail siehst, funktioniert dein SMTP-Setup. Gesendet ' + new Date().toISOString() + '.',
       html: '<p>Wenn du diese Mail siehst, funktioniert dein SMTP-Setup.</p><p>Gesendet ' + new Date().toISOString() + '.</p>',
     });
-    res.json({ ok: true, to, messageId: info && info.messageId });
+    const accepted = Array.isArray(info.accepted) ? info.accepted : [];
+    const rejected = Array.isArray(info.rejected) ? info.rejected : [];
+    const delivered = accepted.length > 0 && rejected.length === 0;
+    if (!delivered) {
+      return res.status(400).json({
+        error: 'Mail wurde nicht zugestellt (Server hat sie abgelehnt).',
+        accepted, rejected,
+        response: info.response,
+        messageId: info.messageId,
+        envelope: info.envelope,
+        log: debugLog.slice(-30),
+      });
+    }
+    res.json({
+      ok: true,
+      to,
+      messageId: info.messageId,
+      accepted,
+      rejected,
+      response: info.response,
+      envelope: info.envelope,
+    });
   } catch (err) {
-    res.status(400).json({ error: 'Versand fehlgeschlagen: ' + err.message });
+    res.status(400).json({
+      error: 'Versand fehlgeschlagen: ' + err.message,
+      code: err.code || null,
+      log: debugLog.slice(-30),
+    });
   }
 });
 
