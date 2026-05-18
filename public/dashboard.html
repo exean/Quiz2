@@ -12,12 +12,17 @@
 </head>
 <body>
   <div class="container">
-    <div class="card flex-between">
-      <div>
-        <h1>Meine Quizzes</h1>
-        <p class="muted small" id="userInfo"></p>
+    <div class="card">
+      <div class="list-item" style="padding:0;border-bottom:none">
+        <div class="list-item-info">
+          <h1>Meine Quizzes</h1>
+          <p class="muted small" id="userInfo"></p>
+        </div>
+        <div class="list-item-actions">
+          <a class="btn secondary" id="adminLink" href="/admin.html" hidden>⚙ Admin</a>
+          <button id="logoutBtn" class="secondary">Abmelden</button>
+        </div>
       </div>
-      <button id="logoutBtn" class="secondary">Abmelden</button>
     </div>
 
     <div class="card">
@@ -90,6 +95,7 @@
       if (!data.user) { location.href = '/login.html'; return; }
       currentMe = data.user.id;
       $('userInfo').textContent = 'Eingeloggt als ' + data.user.email;
+      if (data.user.isAdmin) $('adminLink').hidden = false;
     }
 
     async function loadQuizzes() {

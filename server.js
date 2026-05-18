@@ -181,6 +181,25 @@ function authMiddleware(req, res, next) {
   next();
 }
 
+function adminEmails() {
+  return String(process.env.ADMIN_EMAILS || '')
+    .toLowerCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+function isAdmin(user) {
+  if (!user || !user.email) return false;
+  return adminEmails().includes(normaliseEmail(user.email));
+}
+function adminMiddleware(req, res, next) {
+  authMiddleware(req, res, (err) => {
+    if (err) return next(err);
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Admin-Zugriff erforderlich' });
+    next();
+  });
+}
+
 /* ---------- Users ---------- */
 
 function loadUsers() { return load(USERS_FILE, []); }
@@ -204,19 +223,41 @@ function isValidEmail(email) {
 
 /* ---------- Mail ---------- */
 
+const ADMIN_FILE = path.join(DATA_DIR, 'admin.json');
+
+function loadAdminCfg() { return load(ADMIN_FILE, {}); }
+function saveAdminCfg(cfg) { save(ADMIN_FILE, cfg); }
+
+function resolvedMailConfig() {
+  const cfg = loadAdminCfg().smtp || {};
+  return {
+    host: cfg.host || process.env.SMTP_HOST || '',
+    port: Number(cfg.port || process.env.SMTP_PORT || 587),
+    secure: cfg.secure !== undefined
+      ? !!cfg.secure
+      : String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
+    user: cfg.user || process.env.SMTP_USER || '',
+    pass: cfg.pass !== undefined ? cfg.pass : (process.env.SMTP_PASS || ''),
+    from: cfg.from || process.env.SMTP_FROM || 'Quiz <no-reply@localhost>',
+    source: cfg.host ? 'admin-panel' : (process.env.SMTP_HOST ? 'env' : 'none'),
+  };
+}
+
 let mailer = null;
-let mailFrom = process.env.SMTP_FROM || 'Quiz <no-reply@localhost>';
-if (process.env.SMTP_HOST) {
+let mailFrom = 'Quiz <no-reply@localhost>';
+
+function initMailer() {
+  const c = resolvedMailConfig();
+  mailFrom = c.from;
+  if (!c.host) { mailer = null; return; }
   mailer = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
-    auth: process.env.SMTP_USER ? {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    } : undefined,
+    host: c.host,
+    port: c.port,
+    secure: c.secure,
+    auth: c.user ? { user: c.user, pass: c.pass } : undefined,
   });
 }
+initMailer();
 
 async function sendVerifyMail(email, link) {
   if (!mailer) {
@@ -390,7 +431,82 @@ app.get('/api/auth/me', (req, res) => {
   const user = findUser((u) => u.id === session.userId);
   if (!user || !user.verified) return res.json({ user: null });
   const creds = load(CREDS_FILE, []).filter((c) => c.userId === user.id);
-  res.json({ user: { id: user.id, email: user.email, passkeys: creds.length } });
+  res.json({ user: {
+    id: user.id,
+    email: user.email,
+    passkeys: creds.length,
+    isAdmin: isAdmin(user),
+  } });
+});
+
+/* ---------- Admin: SMTP settings ---------- */
+
+function adminSmtpView() {
+  const c = resolvedMailConfig();
+  return {
+    host: c.host,
+    port: c.port,
+    secure: c.secure,
+    user: c.user,
+    from: c.from,
+    hasPass: !!c.pass,
+    source: c.source,
+  };
+}
+
+app.get('/api/admin/smtp', adminMiddleware, (req, res) => {
+  res.json(adminSmtpView());
+});
+
+app.put('/api/admin/smtp', adminMiddleware, (req, res) => {
+  const body = req.body || {};
+  const cfg = loadAdminCfg();
+  const prev = cfg.smtp || {};
+  const next = {
+    host: typeof body.host === 'string' ? body.host.trim() : prev.host || '',
+    port: Number(body.port) || prev.port || 587,
+    secure: !!body.secure,
+    user: typeof body.user === 'string' ? body.user.trim() : prev.user || '',
+    from: typeof body.from === 'string' ? body.from.trim() : prev.from || '',
+  };
+  // Pass: only update if a non-empty string is provided; empty string keeps previous.
+  if (typeof body.pass === 'string' && body.pass.length > 0) {
+    next.pass = body.pass;
+  } else if (prev.pass !== undefined) {
+    next.pass = prev.pass;
+  } else {
+    next.pass = '';
+  }
+  cfg.smtp = next;
+  saveAdminCfg(cfg);
+  initMailer();
+  res.json(adminSmtpView());
+});
+
+app.delete('/api/admin/smtp', adminMiddleware, (req, res) => {
+  const cfg = loadAdminCfg();
+  delete cfg.smtp;
+  saveAdminCfg(cfg);
+  initMailer();
+  res.json(adminSmtpView());
+});
+
+app.post('/api/admin/smtp/test', adminMiddleware, async (req, res) => {
+  const to = normaliseEmail((req.body && req.body.to) || req.user.email);
+  if (!isValidEmail(to)) return res.status(400).json({ error: 'Ungültige Empfänger-E-Mail' });
+  if (!mailer) return res.status(400).json({ error: 'Kein SMTP konfiguriert' });
+  try {
+    const info = await mailer.sendMail({
+      from: mailFrom,
+      to,
+      subject: 'Quiz · SMTP-Test',
+      text: 'Wenn du diese Mail siehst, funktioniert dein SMTP-Setup. Gesendet ' + new Date().toISOString() + '.',
+      html: '<p>Wenn du diese Mail siehst, funktioniert dein SMTP-Setup.</p><p>Gesendet ' + new Date().toISOString() + '.</p>',
+    });
+    res.json({ ok: true, to, messageId: info && info.messageId });
+  } catch (err) {
+    res.status(400).json({ error: 'Versand fehlgeschlagen: ' + err.message });
+  }
 });
 
 /* ---------- WebAuthn (Passkey) ---------- */
@@ -1508,6 +1624,7 @@ function buildOpenApiSpec(req) {
       { name: 'branding', description: 'Logo hoch- und runterladen' },
       { name: 'transfer', description: 'JSON-Export und -Import' },
       { name: 'results', description: 'Gespeicherte Ergebnisse vergangener Runden' },
+      { name: 'admin', description: 'Server-Einstellungen (nur Admin)' },
     ],
     components: {
       securitySchemes: {
@@ -1808,6 +1925,24 @@ function buildOpenApiSpec(req) {
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['token', 'password'], properties: { token: { type: 'string' }, password: { type: 'string', minLength: 8 } } } } } },
           responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' } } }), '400': errorResp('Token ungültig oder abgelaufen') },
         },
+      },
+      '/admin/smtp': {
+        get: { tags: ['admin'], summary: 'Aktuelle SMTP-Konfiguration (Passwort wird verschwiegen). Nur Admin.',
+          responses: { '200': okInline({ type: 'object' }), '403': errorResp('Kein Admin') } },
+        put: { tags: ['admin'], summary: 'SMTP-Konfiguration speichern; leeres Passwort behält den vorherigen Wert. Nur Admin.',
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object',
+            properties: {
+              host: { type: 'string' }, port: { type: 'integer' }, secure: { type: 'boolean' },
+              user: { type: 'string' }, pass: { type: 'string' }, from: { type: 'string' },
+            } } } } },
+          responses: { '200': okInline({ type: 'object' }) } },
+        delete: { tags: ['admin'], summary: 'Admin-Override verwerfen, Env-Variablen werden wieder verwendet. Nur Admin.',
+          responses: { '200': okInline({ type: 'object' }) } },
+      },
+      '/admin/smtp/test': {
+        post: { tags: ['admin'], summary: 'Test-Mail mit den gespeicherten Settings versenden. Nur Admin.',
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['to'], properties: { to: { type: 'string', format: 'email' } } } } } },
+          responses: { '200': okInline({ type: 'object', properties: { ok: { type: 'boolean' }, to: { type: 'string' } } }), '400': errorResp('Kein SMTP konfiguriert oder Versand-Fehler') } },
       },
       '/tokens': {
         get: {

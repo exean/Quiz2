@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz · Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/bg.js" defer></script>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="list-item" style="padding:0;border-bottom:none">
+        <div class="list-item-info">
+          <h1>Admin-Panel</h1>
+          <p class="muted small">Server-weite Einstellungen für alle User</p>
+        </div>
+        <div class="list-item-actions">
+          <a class="btn secondary" href="/dashboard.html">Zurück</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="forbiddenCard" hidden>
+      <div class="banner-bad">Admin-Zugriff erforderlich. Setze die Umgebungsvariable <code>ADMIN_EMAILS</code> (kommagetrennt) auf deine E-Mail und starte den Server neu.</div>
+    </div>
+
+    <div id="adminBody" hidden>
+      <div class="card">
+        <h2>📧 SMTP-Einstellungen</h2>
+        <p class="muted small">Wird zum Versand von Verify- und Passwort-Reset-Mails verwendet.</p>
+        <p class="muted small" id="sourceInfo"></p>
+
+        <div class="row">
+          <div>
+            <label for="host">Host</label>
+            <input id="host" type="text" placeholder="smtp.beispiel.de" />
+          </div>
+          <div style="flex:0 0 110px">
+            <label for="port">Port</label>
+            <input id="port" type="number" placeholder="587" />
+          </div>
+        </div>
+
+        <div class="flex-between" style="margin-top:.5rem">
+          <div>
+            <strong style="font-weight:500">SSL/TLS (Port 465)</strong>
+            <p class="muted small" style="margin:.1rem 0 0">Aus für STARTTLS auf Port 587</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="secure" />
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <label for="user" class="spaced">Benutzer (optional)</label>
+        <input id="user" type="text" placeholder="username" />
+
+        <label for="pass">Passwort</label>
+        <input id="pass" type="password" placeholder="leer lassen um nicht zu ändern" />
+
+        <label for="from">Absender (From)</label>
+        <input id="from" type="text" placeholder="Quiz &lt;no-reply@deine-domain.tld&gt;" />
+
+        <div class="row spaced">
+          <button id="saveBtn">Speichern</button>
+          <button id="clearBtn" class="danger" type="button" title="Auf Env-Variablen zurückfallen">Setzungen verwerfen</button>
+        </div>
+        <div id="saveMsg" class="small spaced"></div>
+      </div>
+
+      <div class="card">
+        <h2>📨 Test-Versand</h2>
+        <p class="muted small">Schicke eine Test-Mail um die SMTP-Einstellungen zu prüfen.</p>
+        <label for="testTo">An (E-Mail)</label>
+        <input id="testTo" type="email" />
+        <div class="row spaced">
+          <button id="testBtn">Test-Mail senden</button>
+        </div>
+        <div id="testMsg" class="small spaced"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts, credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      });
+      if (res.status === 401) { location.href = '/login.html'; throw new Error('unauth'); }
+      if (res.status === 403) {
+        $('forbiddenCard').hidden = false;
+        $('adminBody').hidden = true;
+        throw new Error('forbidden');
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    function setMsg(el, text, kind) {
+      el.className = (kind === 'good' ? 'banner-good' : 'banner-bad') + ' small spaced';
+      el.textContent = text;
+    }
+
+    async function load() {
+      try {
+        const cfg = await api('/api/admin/smtp');
+        $('adminBody').hidden = false;
+        $('host').value = cfg.host || '';
+        $('port').value = cfg.port || 587;
+        $('secure').checked = !!cfg.secure;
+        $('user').value = cfg.user || '';
+        $('from').value = cfg.from || '';
+        if (cfg.hasPass) $('pass').placeholder = 'gespeichert — leer lassen um nicht zu ändern';
+        const sources = { 'admin-panel': 'Werte aus Admin-Panel aktiv', 'env': 'Werte aus Env-Variablen aktiv (kein Override gespeichert)', 'none': 'Keine SMTP-Daten konfiguriert' };
+        $('sourceInfo').textContent = sources[cfg.source] || '';
+      } catch (err) {
+        if (err.message !== 'forbidden' && err.message !== 'unauth') {
+          $('forbiddenCard').hidden = false;
+          $('forbiddenCard').querySelector('.banner-bad').textContent = err.message;
+        }
+      }
+    }
+
+    $('saveBtn').onclick = async () => {
+      const msg = $('saveMsg');
+      msg.textContent = '';
+      try {
+        const body = {
+          host: $('host').value.trim(),
+          port: Number($('port').value) || 587,
+          secure: $('secure').checked,
+          user: $('user').value.trim(),
+          pass: $('pass').value, // empty = keep previous
+          from: $('from').value.trim(),
+        };
+        const cfg = await api('/api/admin/smtp', { method: 'PUT', body: JSON.stringify(body) });
+        $('pass').value = '';
+        if (cfg.hasPass) $('pass').placeholder = 'gespeichert — leer lassen um nicht zu ändern';
+        setMsg(msg, 'Gespeichert. Mailer ist neu initialisiert.', 'good');
+      } catch (err) {
+        setMsg(msg, err.message, 'bad');
+      }
+    };
+
+    $('clearBtn').onclick = async () => {
+      if (!confirm('Im Admin-Panel gesetzte SMTP-Werte verwerfen? Danach gelten die Env-Variablen (falls vorhanden).')) return;
+      const msg = $('saveMsg');
+      try {
+        await api('/api/admin/smtp', { method: 'DELETE' });
+        await load();
+        setMsg(msg, 'Verworfen.', 'good');
+      } catch (err) {
+        setMsg(msg, err.message, 'bad');
+      }
+    };
+
+    $('testBtn').onclick = async () => {
+      const msg = $('testMsg');
+      msg.textContent = '';
+      const to = $('testTo').value.trim();
+      if (!to) return setMsg(msg, 'Bitte Empfänger angeben', 'bad');
+      try {
+        const r = await api('/api/admin/smtp/test', { method: 'POST', body: JSON.stringify({ to }) });
+        setMsg(msg, '✓ Mail an ' + r.to + ' gesendet' + (r.messageId ? ' (id: ' + r.messageId + ')' : ''), 'good');
+      } catch (err) {
+        setMsg(msg, err.message, 'bad');
+      }
+    };
+
+    // Pre-fill test recipient with current user's email if available
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => { if (d.user && d.user.email) $('testTo').value = d.user.email; });
+
+    load();
+  </script>
+</body>
+</html>
